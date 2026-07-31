@@ -20,7 +20,7 @@ jobs:
       - run: npm run build --workspace @llm-chess/web
         env:
           VITE_BASE_PATH: /llm-chess/
-          VITE_API_BASE: https://llm-chess.steamaa1.workers.dev
+          VITE_API_BASE: https://llm-chess.jiacheng358.workers.dev
       - uses: actions/upload-pages-artifact@v3
         with:
           path: apps/web/dist
