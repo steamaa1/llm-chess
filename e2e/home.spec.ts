@@ -14,6 +14,7 @@ test('shows the application headline and recoverable API failure state', async (
 test('saves a provider profile without persisting the API key', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '打开模型配置' }).click();
+  await page.getByRole('tab', { name: '红方模型' }).click();
   await page.getByLabel('模型名称').fill('saved-test-model');
   await page.getByLabel('Base URL').fill('https://api.example.test/v1');
   await page.getByLabel(/API Key/).fill('must-not-be-persisted');
@@ -24,6 +25,7 @@ test('saves a provider profile without persisting the API key', async ({ page })
   expect(stored).not.toContain('must-not-be-persisted');
   await page.reload();
   await page.getByRole('button', { name: '打开模型配置' }).click();
+  await page.getByRole('tab', { name: '红方模型' }).click();
   await expect(page.getByLabel('模型名称')).toHaveValue('saved-test-model');
   await expect(page.getByLabel(/API Key/)).toHaveValue('');
 });
