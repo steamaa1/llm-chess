@@ -7,7 +7,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - run: npm ci
+      - run: npm install
+      - run: npm run deploy
+        if: env.CF_API_TOKEN != ""
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test

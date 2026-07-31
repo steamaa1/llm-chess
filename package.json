@@ -6,7 +6,8 @@
   "packageManager": "npm@10.9.8",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "concurrently -k -n api,web -c cyan,magenta \"npm run dev -w @llm-chess/api\" \"npm run dev -w @llm-chess/web\"",
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"npx wrangler dev --port 8787\" \"npm run dev -w @llm-chess/web\"",
+    "deploy": "npm run build && npx wrangler deploy",
     "build": "npm run build -ws --if-present",
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint .",
@@ -22,6 +23,7 @@
     "globals": "^16.3.0",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.43.0",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "wrangler": "^4.20.0"
   }
 }

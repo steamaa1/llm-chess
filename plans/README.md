@@ -26,10 +26,10 @@
 | 棋规 | 经过测试、明确支持中国象棋的 TypeScript 规则库；若审查发现其规则/许可/维护状态不达标，则在计划 002 的评估门槛处停止并替换 | 不能自行用 LLM 或不完整手写规则充当裁判。库选择必须先以合法走子、将军、将死、困毙、重复局面/和棋能力和许可证验证。 |
 | 共享契约 | TypeScript workspace 内的 `packages/shared` + Zod | 前后端共用局面、棋谱、请求/响应 schema，避免 API 漂移。 |
 | 测试 | Vitest（单元/组件逻辑）+ Playwright（关键浏览器流程） | 不把真实模型 API 调用纳入 CI；以可控 mock 服务器覆盖协议。 |
-| 部署 | systemd 运行单个 Node 进程，已有反向代理终止 HTTPS；Nginx/Caddy 的选择留待 VPS 实况确认 | LXC 不能 Docker；构建在 CI 完成，VPS 只接收构建产物与生产依赖。 |
+| 部署 | Cloudflare Pages（前端）+ Workers（API），通过 `wrangler deploy` 一键部署；GitHub Actions 自动 CD | LXC 不能 Docker；构建在 CI 完成，VPS 只接收构建产物与生产依赖。 |
 | CI | GitHub Actions 构建、类型检查、测试、打包产物 | 与“低内存 VPS 不在生产机构建”一致。 |
 
-> **尚未确认、且会阻塞真实上线的部署输入**：域名、现有反向代理（1Panel/Nginx/Caddy）、Node LTS 版本、可用内存/Swap、服务运行用户、TLS 证书方式、开放端口，以及模型 API 网络连通性。计划 005 要求在改 VPS 前逐项核对；不能根据猜测执行。
+> **首次部署需要**：Cloudflare 账号、`CF_API_TOKEN` 和 `CF_ACCOUNT_ID` GitHub Secrets（计划 005 第 2 步）。免费层限制：10 万请求/天、Worker 执行 30s 上限；LLM 转发超时需在实际使用中验证。
 
 > **技术栈变更记录（2026-07-31）**：执行 Plan 001 前已检查环境：Node.js v22.23.1、npm v10.9.8 可用；没有 pnpm 命令、pnpm store 或项目依赖。操作者选择使用现有 npm workspace，故原先“pnpm workspace/命令”统一替换为 npm workspace/等价 npm 命令；产品、架构与安全约束不变。
 
@@ -41,7 +41,7 @@
 | 002 | 实现并验证确定性中国象棋领域核心 | P1 | L | 001 | IN PROGRESS（仅共享契约与无引擎测试草稿；未安装/未验证） |
 | 003 | 建立安全可验证的兼容 LLM 走棋网关 | P1 | L | 001, 002 | TODO |
 | 004 | 交付双模式棋局与本地棋谱的响应式界面 | P1 | L | 001, 002, 003 | IN PROGRESS（棋盘/双模式/设置面板 UI 壳已完成并经 CI 验证；规则与模型网关待接入） |
-| 005 | 在非 Docker 的 1G LXC VPS 上可观测地发布 | P2 | M | 001–004 | TODO |
+| 005 | 部署至 Cloudflare Pages + Workers 并持续交付 | P2 | M | 001–004 | TODO（cf 配置文件已完成；待配置 Secrets 后首次部署） |
 
 状态值：TODO｜IN PROGRESS｜DONE｜BLOCKED（附一行原因）｜REJECTED（附一行理由）。
 
