@@ -44,7 +44,8 @@ function candidateMoves(pieces: GamePiece[], piece: GamePiece): Position[] {
   const positions: Position[] = [];
   const add = (p: Position) => { if (inside(p) && at(pieces, p)?.side !== piece.side) positions.push(p); };
   if (piece.kind === 'rook' || piece.kind === 'cannon') {
-    [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => {
+    const directions: Array<[number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    directions.forEach(([dx, dy]) => {
       let p = move(piece.file + dx, piece.rank + dy); let screen = false;
       while (inside(p)) {
         const target = at(pieces, p);
@@ -55,13 +56,17 @@ function candidateMoves(pieces: GamePiece[], piece: GamePiece): Position[] {
       }
     });
   } else if (piece.kind === 'horse') {
-    [[1, 2, 0, 1], [2, 1, 1, 0], [2, -1, 1, 0], [1, -2, 0, -1], [-1, -2, 0, -1], [-2, -1, -1, 0], [-2, 1, -1, 0], [-1, 2, 0, 1]].forEach(([dx, dy, lx, ly]) => { if (!at(pieces, move(piece.file + lx, piece.rank + ly))) add(move(piece.file + dx, piece.rank + dy)); });
+    const horseSteps: Array<[number, number, number, number]> = [[1, 2, 0, 1], [2, 1, 1, 0], [2, -1, 1, 0], [1, -2, 0, -1], [-1, -2, 0, -1], [-2, -1, -1, 0], [-2, 1, -1, 0], [-1, 2, 0, 1]];
+    horseSteps.forEach(([dx, dy, lx, ly]) => { if (!at(pieces, move(piece.file + lx, piece.rank + ly))) add(move(piece.file + dx, piece.rank + dy)); });
   } else if (piece.kind === 'elephant') {
-    [[2, 2], [2, -2], [-2, 2], [-2, -2]].forEach(([dx, dy]) => { const p = move(piece.file + dx, piece.rank + dy); const eye = move(piece.file + dx / 2, piece.rank + dy / 2); if (!at(pieces, eye) && (piece.side === 'red' ? p.rank >= 5 : p.rank <= 4)) add(p); });
+    const elephantSteps: Array<[number, number]> = [[2, 2], [2, -2], [-2, 2], [-2, -2]];
+    elephantSteps.forEach(([dx, dy]) => { const p = move(piece.file + dx, piece.rank + dy); const eye = move(piece.file + dx / 2, piece.rank + dy / 2); if (!at(pieces, eye) && (piece.side === 'red' ? p.rank >= 5 : p.rank <= 4)) add(p); });
   } else if (piece.kind === 'advisor') {
-    [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(([dx, dy]) => { const p = move(piece.file + dx, piece.rank + dy); if (inPalace(piece.side, p)) add(p); });
+    const advisorSteps: Array<[number, number]> = [[1, 1], [1, -1], [-1, 1], [-1, -1]];
+    advisorSteps.forEach(([dx, dy]) => { const p = move(piece.file + dx, piece.rank + dy); if (inPalace(piece.side, p)) add(p); });
   } else if (piece.kind === 'general') {
-    [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dx, dy]) => { const p = move(piece.file + dx, piece.rank + dy); if (inPalace(piece.side, p)) add(p); });
+    const generalSteps: Array<[number, number]> = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    generalSteps.forEach(([dx, dy]) => { const p = move(piece.file + dx, piece.rank + dy); if (inPalace(piece.side, p)) add(p); });
     const enemyGeneral = pieces.find((p) => p.kind === 'general' && p.side !== piece.side);
     if (enemyGeneral && enemyGeneral.file === piece.file && blocked(pieces, piece, enemyGeneral) === 0) add(enemyGeneral);
   } else {
