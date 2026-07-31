@@ -37,7 +37,7 @@ export function App() {
 
   useEffect(() => {
     const controller = new AbortController();
-    fetch(`${import.meta.env.VITE_API_BASE ?? ''}/api/health`, { signal: controller.signal })
+    fetch('/api/health', { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error('health failed');
         return response.json() as Promise<Health>;

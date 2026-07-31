@@ -9,3 +9,7 @@ test-results/
 
 *.tsbuildinfo
 plans/
+
+.wrangler/
+.dev.vars
+!.dev.vars.example

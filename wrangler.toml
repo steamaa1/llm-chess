@@ -1,9 +1,15 @@
-# Cloudflare Workers 部署配置（纯 API，不含前端静态资源）
-# 前端由 GitHub Pages 托管：https://steamaa1.github.io/llm-chess/
+# 一体化 Cloudflare Worker：前端静态资源 + Hono API
+# GitHub 连接 Workers 后，Cloudflare 自动执行 [build] command，
+# 再由 Worker Assets 将 apps/web/dist 部署至同一 workers.dev 域名。
 
-name = "llm-chess-api"
+name = "llm-chess"
 main = "apps/api/src/worker.ts"
 compatibility_date = "2025-07-31"
 compatibility_flags = ["nodejs_compat"]
 
-# 纯 API Worker —— 前端部署在 GitHub Pages
+[build]
+command = "npm run build --workspace @llm-chess/web"
+
+[assets]
+directory = "apps/web/dist"
+not_found_handling = "single-page-application"

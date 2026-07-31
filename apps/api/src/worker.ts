@@ -1,16 +1,10 @@
 import { app } from './app.js';
 
 /**
- * Cloudflare Workers 入口。
+ * Cloudflare Workers 一体化入口。
  *
- * Hono 的 fetch 签名与 Workers 的 fetch handler 完全兼容，
- * 因此只需导出 app 作为默认出口。
- *
- * - `/api/*` 路由由 Worker 处理。
- * - 静态资源（前端构建产物）由 Cloudflare 在边缘层直接响应，
- *   无需经过 Worker。
- *
- * 本地开发：`wrangler dev` 或 `npm run dev`（通过 concurrently
- * 同时启动 Vite 和 Wrangler）。
+ * - Worker Assets 在同一域名直接响应 React/Vite 生产静态文件。
+ * - Hono 处理 `/api/*` 路由。
+ * - 前端和 API 同源，因此无需 VITE_API_BASE 或 CORS 配置。
  */
 export default app;
