@@ -37,10 +37,10 @@
 
 | Plan | 标题 | Priority | Effort | Depends on | Status |
 |---|---|---:|---:|---|---|
-| 001 | 建立受控的 Web、API 与质量基线 | P1 | M | — | TODO |
+| 001 | 建立受控的 Web、API 与质量基线 | P1 | M | — | IN PROGRESS（手机已清除依赖；等待云端 CI 验证） |
 | 002 | 实现并验证确定性中国象棋领域核心 | P1 | L | 001 | IN PROGRESS（仅共享契约与无引擎测试草稿；未安装/未验证） |
 | 003 | 建立安全可验证的兼容 LLM 走棋网关 | P1 | L | 001, 002 | TODO |
-| 004 | 交付双模式棋局与本地棋谱的响应式界面 | P1 | L | 001, 002, 003 | TODO |
+| 004 | 交付双模式棋局与本地棋谱的响应式界面 | P1 | L | 001, 002, 003 | IN PROGRESS（仅静态运行界面；规则与模型网关尚未接入） |
 | 005 | 在非 Docker 的 1G LXC VPS 上可观测地发布 | P2 | M | 001–004 | TODO |
 
 状态值：TODO｜IN PROGRESS｜DONE｜BLOCKED（附一行原因）｜REJECTED（附一行理由）。
