@@ -10,7 +10,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
-      - run: npm install
+      - run: npm ci
       - name: Build frontend (assets not used by bundle, but keeps wrangler happy)
         run: npm run build --workspace @llm-chess/web
       - name: Bundle worker into a single file
