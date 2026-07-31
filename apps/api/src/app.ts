@@ -34,7 +34,9 @@ function promptFor(side: Side, legalMoves: Move[], historyLength: number) {
   ].join('\n');
 }
 
-async function callModel(baseUrl: string, apiKey: string, model: string, prompt: string, repair: boolean) {
+type UpstreamResult = { content: string } | { error: string; status: number };
+
+async function callModel(baseUrl: string, apiKey: string, model: string, prompt: string, repair: boolean): Promise<UpstreamResult> {
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 25_000);
   try {
     const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
@@ -66,7 +68,7 @@ app.post('/api/llm/move', async (context) => {
     const upstream = await callModel(parsed.data.config.baseUrl, parsed.data.config.apiKey, parsed.data.config.model, prompt, attempt === 1);
     if ('error' in upstream) {
       const messages: Record<string, string> = { AUTH_FAILED: 'API Key 无效或没有模型权限。', RATE_LIMITED: '模型服务请求过于频繁，请稍后重试。', UPSTREAM_TIMEOUT: '模型响应超时，棋局未改变。', UPSTREAM_UNAVAILABLE: '无法连接模型服务。', UPSTREAM_ERROR: '模型服务暂时异常。' };
-      return errorResponse(context, upstream.status, upstream.error, messages[upstream.error]);
+      return errorResponse(context, upstream.status, upstream.error, messages[upstream.error] ?? '模型服务请求失败。');
     }
     try {
       const choice = llmMoveChoiceSchema.parse(JSON.parse(upstream.content));
