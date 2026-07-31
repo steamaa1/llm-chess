@@ -1,17 +1,9 @@
-# Cloudflare Workers + Assets 部署配置
-# =======================================
-# 前端静态资源（`apps/web/dist`）由 Cloudflare 边缘直接响应；
-# API 路由（`/api/*`）由 Worker 处理。
-# 部署命令：`npx wrangler deploy`
+# Cloudflare Workers 部署配置（纯 API，不含前端静态资源）
+# 前端由 GitHub Pages 托管：https://steamaa1.github.io/llm-chess/
 
-name = "llm-chess"
+name = "llm-chess-api"
 main = "apps/api/src/worker.ts"
 compatibility_date = "2025-07-31"
 compatibility_flags = ["nodejs_compat"]
 
-[assets]
-directory = "apps/web/dist"
-
-# 观察指标（可选，用于生产调试日志）
-[observability]
-enabled = false
+# 纯 API Worker —— 前端部署在 GitHub Pages
