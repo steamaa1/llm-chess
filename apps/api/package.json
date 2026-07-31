@@ -3,7 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "tsx watch src/server.ts", "start": "tsx src/server.ts", "build": "tsc -b", "typecheck": "tsc -b --pretty false" },
-  "dependencies": { "@hono/node-server": "^1.18.0", "@llm-chess/shared": "*", "hono": "^4.9.6" },
-  "devDependencies": { "tsx": "^4.20.5" }
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@llm-chess/shared": "*",
+    "hono": "^4.9.6"
+  }
 }
