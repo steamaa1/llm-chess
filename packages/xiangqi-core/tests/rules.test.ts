@@ -22,9 +22,9 @@ describe('deterministic xiangqi rules', () => {
     expect(after.filter((piece) => piece.kind === 'general')).toHaveLength(2);
   });
 
-  it('does not permit a side to move while its general is in check', () => {
+  it('detects the illegal generals-facing position after the center blockers are removed', () => {
     const pieces = createInitialPieces().filter((piece) => !['red-pawn-4', 'black-pawn-4'].includes(piece.id));
-    expect(isInCheck(pieces, 'red')).toBe(false);
+    expect(isInCheck(pieces, 'red')).toBe(true);
     expect(gameResult(pieces, 'red')).toBe('playing');
   });
 });
