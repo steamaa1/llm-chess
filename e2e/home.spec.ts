@@ -32,6 +32,7 @@ test('opens the public analysis page without claiming hidden chain of thought', 
   await expect(page.getByRole('heading', { name: '对局分析' })).toBeVisible();
   await expect(page.getByText('这里不请求或展示模型隐藏思维链。')).toBeVisible();
   await expect(page.getByText('尚无分析记录')).toBeVisible();
+  await expect(page.getByText('导入棋谱')).toBeVisible();
 });
 
 test('saves a provider profile without persisting the API key', async ({ page }) => {

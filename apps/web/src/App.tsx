@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { requestLlmMove, LlmRequestError } from './llmClient.js';
-import { createInitialPieces, gameResult, legalMovesForPiece, makeMove, type GamePiece, type GameResult, type Move } from '@llm-chess/xiangqi-core';
+import { allLegalMoves, createInitialPieces, gameResult, legalMovesForPiece, makeMove, positionKey, type GamePiece, type GameResult, type Move } from '@llm-chess/xiangqi-core';
 
 type Health = { ok: true; data: { service: string; status: string } };
 type Mode = 'human-vs-llm' | 'llm-vs-llm';
@@ -141,13 +141,22 @@ export function App() {
     if (nextResult === 'black_wins_checkmate') return '将死！黑方胜利。';
     if (nextResult === 'red_wins_stalemate') return '困毙！红方胜利。';
     if (nextResult === 'black_wins_stalemate') return '困毙！黑方胜利。';
+    if (nextResult === 'draw_repetition') return '同一局面三次出现，本局和棋。';
+    if (nextResult === 'move_limit_reached') return '已达到 200 回合上限，本局未判胜负。';
     return '';
   }
 
   function commitMove(move: Move, commentary?: string) {
     if (gameOver) return;
-    const nextPieces = makeMove(pieces, move); const nextTurn = turn === 'red' ? 'black' : 'red'; const nextResult = gameResult(nextPieces, nextTurn);
-    setPieces(nextPieces); setTurn(nextTurn); setResult(nextResult); setHistory((current) => [...current, move]); setSelectedPiece(null);
+    const nextPieces = makeMove(pieces, move); const nextTurn = turn === 'red' ? 'black' : 'red'; const nextHistory = [...history, move];
+    let nextResult = gameResult(nextPieces, nextTurn);
+    if (nextResult === 'playing' && nextHistory.length >= 400) nextResult = 'move_limit_reached';
+    if (nextResult === 'playing') {
+      const targetKey = positionKey(nextPieces, nextTurn); let replayPieces = createInitialPieces(); let replayTurn: Side = 'red'; let occurrences = positionKey(replayPieces, replayTurn) === targetKey ? 1 : 0;
+      nextHistory.forEach((played) => { replayPieces = makeMove(replayPieces, played); replayTurn = replayTurn === 'red' ? 'black' : 'red'; if (positionKey(replayPieces, replayTurn) === targetKey) occurrences += 1; });
+      if (occurrences >= 3) nextResult = 'draw_repetition';
+    }
+    setPieces(nextPieces); setTurn(nextTurn); setResult(nextResult); setHistory(nextHistory); setSelectedPiece(null);
     if (!commentary) setAnalysis((current) => [...current, { id: crypto.randomUUID(), side: turn, move: move.notation, status: 'success', detail: '玩家走棋 · 规则引擎校验通过', at: new Date().toISOString() }]);
     if (nextResult !== 'playing') setStarted(false);
     setNotice(nextResult === 'playing' ? `${move.notation}${move.captureId ? '，吃子' : ''}${move.givesCheck ? '，将军！' : ''} 现在轮到${nextTurn === 'red' ? '红方' : '黑方'}走棋。` : describeResult(nextResult));
@@ -218,6 +227,21 @@ export function App() {
     setNotice('棋谱已保存到当前浏览器，不包含 API Key。');
   }
 
+  async function importGame(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]; event.target.value = ''; if (!file) return;
+    try {
+      const raw: unknown = JSON.parse(await file.text());
+      if (!raw || typeof raw !== 'object' || (raw as { schemaVersion?: unknown }).schemaVersion !== 1 || !Array.isArray((raw as { moves?: unknown }).moves)) throw new Error('format');
+      const imported = raw as StoredGame; let restored = createInitialPieces(); let replayTurn: Side = 'red'; const verified: Move[] = [];
+      for (const candidate of imported.moves) {
+        const legal = allLegalMoves(restored, replayTurn).find((move) => move.from.file === candidate.from.file && move.from.rank === candidate.from.rank && move.to.file === candidate.to.file && move.to.rank === candidate.to.rank);
+        if (!legal) throw new Error('illegal move');
+        verified.push(legal); restored = makeMove(restored, legal); replayTurn = replayTurn === 'red' ? 'black' : 'red';
+      }
+      setPieces(restored); setHistory(verified); setTurn(replayTurn); setResult(gameResult(restored, replayTurn)); setAnalysis(Array.isArray(imported.analysis) ? imported.analysis.slice(0, 800) : []); setStarted(false); setPaused(false); setSelectedPiece(null); setView('game'); setAppError(null); setNotice(`已导入 ${verified.length} 个半回合，API Key 未包含在棋谱中。`);
+    } catch { setAppError({ code: 'INVALID_GAME_FILE', message: '棋谱文件格式无效或包含非法走法，未导入任何内容。' }); }
+  }
+
   function download(content: string, name: string, type: string) {
     const url = URL.createObjectURL(new Blob([content], { type })); const anchor = document.createElement('a'); anchor.href = url; anchor.download = name; anchor.click(); URL.revokeObjectURL(url);
   }
@@ -237,7 +261,7 @@ export function App() {
     </section>
 
     <section className="principles" aria-label="产品原则"><article><span>01</span><h2>规则优先</h2><p>合法走法、将军与终局，都由规则引擎裁决。</p></article><article><span>02</span><h2>密钥不留存</h2><p>仅保存供应商、模型和 Base URL；Key 只在当前会话内。</p></article><article><span>03</span><h2>公开说明</h2><p>展示模型主动提供的短评，不显示隐藏思维链。</p></article></section>
-    </> : <section className="analysis-page"><div className="analysis-heading"><div><p className="eyebrow">AUDITABLE GAME TRACE</p><h1>对局分析</h1><p>查看公开走棋说明、规则校验和错误事件。这里不请求或展示模型隐藏思维链。</p></div><div className="analysis-actions"><button className="secondary-button" type="button" onClick={saveGame}>保存棋谱</button><button className="secondary-button" type="button" onClick={() => download(JSON.stringify({ schemaVersion: 1, result, moves: history, analysis }, null, 2), 'llm-chess-game.json', 'application/json')}>导出 JSON</button><button className="secondary-button" type="button" onClick={() => download(history.map((move, index) => `${index + 1}. ${move.notation}`).join('\n'), 'llm-chess-game.txt', 'text/plain')}>导出文本</button></div></div><div className="analysis-timeline">{analysis.length ? analysis.map((event) => <article className={`analysis-event analysis-event--${event.status}`} key={event.id}><span className="analysis-dot" /><div><header><strong>{event.side === 'red' ? '红方' : '黑方'}{event.move ? ` · ${event.move}` : ''}</strong><time>{new Date(event.at).toLocaleTimeString('zh-CN')}</time></header>{event.commentary && <blockquote>{event.commentary}</blockquote>}<p>{event.detail}</p></div></article>) : <div className="analysis-empty"><span>谱</span><h2>尚无分析记录</h2><p>开始对局后，模型请求、公开说明和错误会按时间显示在这里。</p></div>}</div></section>}
+    </> : <section className="analysis-page"><div className="analysis-heading"><div><p className="eyebrow">AUDITABLE GAME TRACE</p><h1>对局分析</h1><p>查看公开走棋说明、规则校验和错误事件。这里不请求或展示模型隐藏思维链。</p></div><div className="analysis-actions"><button className="secondary-button" type="button" onClick={saveGame}>保存棋谱</button><button className="secondary-button" type="button" onClick={() => download(JSON.stringify({ schemaVersion: 1, result, moves: history, analysis }, null, 2), 'llm-chess-game.json', 'application/json')}>导出 JSON</button><button className="secondary-button" type="button" onClick={() => download(history.map((move, index) => `${index + 1}. ${move.notation}`).join('\n'), 'llm-chess-game.txt', 'text/plain')}>导出文本</button><label className="file-button">导入棋谱<input type="file" accept="application/json,.json" onChange={importGame} /></label></div></div><div className="analysis-timeline">{analysis.length ? analysis.map((event) => <article className={`analysis-event analysis-event--${event.status}`} key={event.id}><span className="analysis-dot" /><div><header><strong>{event.side === 'red' ? '红方' : '黑方'}{event.move ? ` · ${event.move}` : ''}</strong><time>{new Date(event.at).toLocaleTimeString('zh-CN')}</time></header>{event.commentary && <blockquote>{event.commentary}</blockquote>}<p>{event.detail}</p></div></article>) : <div className="analysis-empty"><span>谱</span><h2>尚无分析记录</h2><p>开始对局后，模型请求、公开说明和错误会按时间显示在这里。</p></div>}</div></section>}
 
     {isSettingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsSettingsOpen(false)}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="关闭模型配置" onClick={() => setIsSettingsOpen(false)}>×</button><p className="eyebrow">连接配置</p><h2 id="settings-title">保存模型供应商</h2><p>服务商、模型名、Base URL 会安全保存到此浏览器；API Key <strong>永不写入本地存储</strong>，刷新页面后需重新填写。</p><div className="config-side-tabs" role="tablist" aria-label="选择要配置的一方">{(['red', 'black'] as Side[]).map((side) => <button type="button" role="tab" aria-selected={editingSide === side} className={editingSide === side ? `is-active side-${side}` : `side-${side}`} key={side} onClick={() => switchEditingSide(side)}>{side === 'red' ? '红方模型' : '黑方模型'}</button>)}</div><div className="setting-grid"><label>服务商<select value={draft.provider} onChange={(event) => selectProvider(event.target.value as ProviderId)}>{(Object.keys(PROVIDERS) as ProviderId[]).map((provider) => <option value={provider} key={provider}>{PROVIDERS[provider].label}</option>)}</select></label><label>模型名称<input value={draft.model} onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))} placeholder="例如：deepseek-chat" autoComplete="off" /></label><label className="span-all">Base URL<input value={draft.baseUrl} onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" inputMode="url" autoComplete="off" /></label><label className="span-all">API Key <span className="field-hint">仅限当前会话，可留空后稍后填写</span><input type="password" value={draft.apiKey} onChange={(event) => setDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder="不会保存到浏览器" autoComplete="off" /></label></div>{formError && <p className="form-error" role="alert">{formError}</p>}<button type="button" className="primary-button" onClick={saveProfile}>保存 {editingSide === 'red' ? '红方' : '黑方'}供应商</button></section></div>}
   </main>;

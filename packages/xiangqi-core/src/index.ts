@@ -4,7 +4,7 @@ export type PieceKind = 'rook' | 'horse' | 'elephant' | 'advisor' | 'general' | 
 export type Position = { file: number; rank: number };
 export type GamePiece = Position & { id: string; side: Side; kind: PieceKind; label: string };
 export type Move = { from: Position; to: Position; pieceId: string; captureId?: string; notation: string; givesCheck: boolean };
-export type GameResult = 'playing' | 'red_wins_checkmate' | 'black_wins_checkmate' | 'red_wins_stalemate' | 'black_wins_stalemate';
+export type GameResult = 'playing' | 'red_wins_checkmate' | 'black_wins_checkmate' | 'red_wins_stalemate' | 'black_wins_stalemate' | 'draw_repetition' | 'move_limit_reached';
 
 const FILES = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 const LABELS: Record<Side, Record<PieceKind, string>> = {
@@ -92,6 +92,10 @@ export function legalMovesForPiece(pieces: GamePiece[], pieceId: string): Move[]
 }
 export function allLegalMoves(pieces: GamePiece[], side: Side) { return pieces.filter((piece) => piece.side === side).flatMap((piece) => legalMovesForPiece(pieces, piece.id)); }
 export function makeMove(pieces: GamePiece[], move: Move) { const piece = pieces.find((p) => p.id === move.pieceId); return piece ? apply(pieces, piece, move.to) : pieces; }
+export function positionKey(pieces: GamePiece[], sideToMove: Side) {
+  return `${sideToMove}|${pieces.slice().sort((a, b) => a.id.localeCompare(b.id)).map((piece) => `${piece.side[0]}${piece.kind[0]}${piece.file}${piece.rank}`).join('/')}`;
+}
+
 export function gameResult(pieces: GamePiece[], sideToMove: Side): GameResult {
   const moves = allLegalMoves(pieces, sideToMove); if (moves.length) return 'playing';
   const winner = other(sideToMove); return isInCheck(pieces, sideToMove) ? `${winner}_wins_checkmate` as GameResult : `${winner}_wins_stalemate` as GameResult;
