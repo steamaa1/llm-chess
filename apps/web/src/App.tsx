@@ -1,18 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createInitialPieces, gameResult, legalMovesForPiece, makeMove, type GamePiece, type GameResult, type Move } from '@llm-chess/xiangqi-core';
 
 type Health = { ok: true; data: { service: string; status: string } };
 type Mode = 'human-vs-llm' | 'llm-vs-llm';
 type Side = 'red' | 'black';
 type ProviderId = 'custom' | 'openai' | 'deepseek' | 'siliconflow';
-
-type Piece = { id: string; side: Side; label: string; file: number; rank: number };
 type SavedModelProfile = { provider: ProviderId; model: string; baseUrl: string };
 type ModelProfiles = Record<Side, SavedModelProfile>;
 type SessionKeys = Record<Side, string>;
 type DraftConfig = SavedModelProfile & { apiKey: string };
 
 const STORAGE_KEY = 'llm-chess:model-profiles:v1';
-const files = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 const DEFAULT_PROFILE: SavedModelProfile = { provider: 'deepseek', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' };
 const PROVIDERS: Record<ProviderId, { label: string; baseUrl: string; model: string }> = {
   custom: { label: 'OpenAI 兼容接口', baseUrl: '', model: '' },
@@ -21,12 +19,7 @@ const PROVIDERS: Record<ProviderId, { label: string; baseUrl: string; model: str
   siliconflow: { label: '硅基流动', baseUrl: 'https://api.siliconflow.cn/v1', model: 'deepseek-ai/DeepSeek-V3' }
 };
 
-const initialPieces: Piece[] = [
-  ['r-rook-1', 'red', '车', 0, 9], ['r-horse-1', 'red', '马', 1, 9], ['r-elephant-1', 'red', '相', 2, 9], ['r-advisor-1', 'red', '仕', 3, 9], ['r-general', 'red', '帅', 4, 9], ['r-advisor-2', 'red', '仕', 5, 9], ['r-elephant-2', 'red', '相', 6, 9], ['r-horse-2', 'red', '马', 7, 9], ['r-rook-2', 'red', '车', 8, 9],
-  ['r-cannon-1', 'red', '炮', 1, 7], ['r-cannon-2', 'red', '炮', 7, 7], ['r-pawn-1', 'red', '兵', 0, 6], ['r-pawn-2', 'red', '兵', 2, 6], ['r-pawn-3', 'red', '兵', 4, 6], ['r-pawn-4', 'red', '兵', 6, 6], ['r-pawn-5', 'red', '兵', 8, 6],
-  ['b-rook-1', 'black', '車', 0, 0], ['b-horse-1', 'black', '馬', 1, 0], ['b-elephant-1', 'black', '象', 2, 0], ['b-advisor-1', 'black', '士', 3, 0], ['b-general', 'black', '將', 4, 0], ['b-advisor-2', 'black', '士', 5, 0], ['b-elephant-2', 'black', '象', 6, 0], ['b-horse-2', 'black', '馬', 7, 0], ['b-rook-2', 'black', '車', 8, 0],
-  ['b-cannon-1', 'black', '砲', 1, 2], ['b-cannon-2', 'black', '砲', 7, 2], ['b-pawn-1', 'black', '卒', 0, 3], ['b-pawn-2', 'black', '卒', 2, 3], ['b-pawn-3', 'black', '卒', 4, 3], ['b-pawn-4', 'black', '卒', 6, 3], ['b-pawn-5', 'black', '卒', 8, 3]
-].map(([id, side, label, file, rank]) => ({ id: String(id), side: side as Side, label: String(label), file: Number(file), rank: Number(rank) }));
+const files = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 
 const labels: Record<Mode, string> = { 'human-vs-llm': '与 LLM 对战', 'llm-vs-llm': '观看 LLM 对弈' };
 
@@ -69,7 +62,11 @@ export function App() {
   const [editingSide, setEditingSide] = useState<Side>('red');
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [selectedPiece, setSelectedPiece] = useState<string | null>(null);
-  const [notice, setNotice] = useState('正在准备标准开局。');
+  const [pieces, setPieces] = useState<GamePiece[]>(createInitialPieces);
+  const [turn, setTurn] = useState<Side>('red');
+  const [result, setResult] = useState<GameResult>('playing');
+  const [history, setHistory] = useState<Move[]>([]);
+  const [notice, setNotice] = useState('红方先行，请选择一枚红方棋子。');
   const [profiles, setProfiles] = useState<ModelProfiles>(readProfiles);
   const [sessionKeys, setSessionKeys] = useState<SessionKeys>({ red: '', black: '' });
   const [draft, setDraft] = useState<DraftConfig>(() => ({ ...readProfiles().red, apiKey: '' }));
@@ -107,11 +104,35 @@ export function App() {
     setNotice(nextMode === 'human-vs-llm' ? '已切换为人机对战，请选择执棋方。' : '已切换为观战模式，配置红黑双方模型后即可开局。');
   }
 
-  function selectPiece(piece: Piece) {
-    if (mode === 'human-vs-llm' && piece.side !== selectedSide) { setNotice(`当前由${currentSideLabel}玩家操作，请选择己方棋子。`); return; }
-    setSelectedPiece(piece.id);
-    setNotice(`已选中${piece.side === 'red' ? '红方' : '黑方'}${piece.label}。规则引擎接入后将显示合法落点。`);
+  const legalTargets = useMemo(() => selectedPiece ? legalMovesForPiece(pieces, selectedPiece) : [], [pieces, selectedPiece]);
+  const gameOver = result !== 'playing';
+
+  function describeResult(nextResult: GameResult) {
+    if (nextResult === 'red_wins_checkmate') return '将死！红方胜利。';
+    if (nextResult === 'black_wins_checkmate') return '将死！黑方胜利。';
+    if (nextResult === 'red_wins_stalemate') return '困毙！红方胜利。';
+    if (nextResult === 'black_wins_stalemate') return '困毙！黑方胜利。';
+    return '';
   }
+
+  function commitMove(move: Move) {
+    if (gameOver) return;
+    const nextPieces = makeMove(pieces, move); const nextTurn = turn === 'red' ? 'black' : 'red'; const nextResult = gameResult(nextPieces, nextTurn);
+    setPieces(nextPieces); setTurn(nextTurn); setResult(nextResult); setHistory((current) => [...current, move]); setSelectedPiece(null);
+    setNotice(nextResult === 'playing' ? `${move.notation}${move.captureId ? '，吃子' : ''}${move.givesCheck ? '，将军！' : ''} 现在轮到${nextTurn === 'red' ? '红方' : '黑方'}走棋。` : describeResult(nextResult));
+  }
+
+  function selectPiece(piece: GamePiece) {
+    if (gameOver) { setNotice(describeResult(result)); return; }
+    const targetMove = legalTargets.find((move) => move.to.file === piece.file && move.to.rank === piece.rank);
+    if (targetMove) { commitMove(targetMove); return; }
+    if (piece.side !== turn) { setNotice(`现在轮到${turn === 'red' ? '红方' : '黑方'}走棋。`); return; }
+    if (mode === 'human-vs-llm' && piece.side !== selectedSide) { setNotice(`当前由${currentSideLabel}玩家操作，请选择己方棋子。`); return; }
+    const moves = legalMovesForPiece(pieces, piece.id);
+    setSelectedPiece(piece.id); setNotice(moves.length ? `已选中${piece.side === 'red' ? '红方' : '黑方'}${piece.label}，亮点为合法落点。` : '该棋子当前没有合法走法。');
+  }
+
+  function resetGame() { setPieces(createInitialPieces()); setTurn('red'); setResult('playing'); setHistory([]); setSelectedPiece(null); setNotice('已恢复标准开局，红方先行。'); }
 
   function selectProvider(provider: ProviderId) {
     const preset = PROVIDERS[provider];
@@ -147,9 +168,9 @@ export function App() {
 
     <section id="main-content" className="game-layout" aria-label="对局区">
       <aside className="player-card player-card--black"><div className="player-mark">黑</div><div><p>黑方棋手</p><h2>{mode === 'human-vs-llm' && selectedSide === 'black' ? '你' : profileName(profiles.black)}</h2><button className="profile-link" type="button" onClick={() => openSettings('black')}>配置黑方模型</button></div><span className="turn-badge">后手</span></aside>
-      <section className="board-panel" aria-label="中国象棋棋盘"><div className="board-frame"><div className="board" role="application" aria-label="标准中国象棋开局，红方在下"><BoardLines /><div className="river" aria-hidden="true"><span>楚 河</span><span>漢 界</span></div>{initialPieces.map((piece) => <button key={piece.id} className={`piece piece--${piece.side} ${selectedPiece === piece.id ? 'piece--selected' : ''}`} style={{ left: `${piece.file * 12.5}%`, top: `${piece.rank * (100 / 9)}%` }} type="button" aria-label={`${piece.side === 'red' ? '红方' : '黑方'}${piece.label}，${files[piece.file]}路第${piece.rank + 1}行`} aria-pressed={selectedPiece === piece.id} onClick={() => selectPiece(piece)}>{piece.label}</button>)}</div></div><p className="board-caption">红方在下 · 标准开局 · 棋子定位已按九路十行棋盘交叉点校正</p></section>
+      <section className="board-panel" aria-label="中国象棋棋盘"><div className="board-frame"><div className="board" role="application" aria-label="标准中国象棋开局，红方在下"><BoardLines /><div className="river" aria-hidden="true"><span>楚 河</span><span>漢 界</span></div>{legalTargets.map((move) => <button key={`target-${move.to.file}-${move.to.rank}`} className="legal-target" style={{ left: `${move.to.file * 12.5}%`, top: `${move.to.rank * (100 / 9)}%` }} type="button" aria-label={`走到${files[move.to.file]}路第${move.to.rank + 1}行`} onClick={() => commitMove(move)}><span /></button>)}{pieces.map((piece) => <button key={piece.id} className={`piece piece--${piece.side} ${selectedPiece === piece.id ? 'piece--selected' : ''}`} style={{ left: `${piece.file * 12.5}%`, top: `${piece.rank * (100 / 9)}%` }} type="button" aria-label={`${piece.side === 'red' ? '红方' : '黑方'}${piece.label}，${files[piece.file]}路第${piece.rank + 1}行`} aria-pressed={selectedPiece === piece.id} onClick={() => selectPiece(piece)}>{piece.label}</button>)}</div></div><p className="board-caption">红方在下 · 标准开局 · 点击棋子查看合法落点</p></section>
       <aside className="player-card player-card--red"><div className="player-mark">红</div><div><p>红方棋手</p><h2>{mode === 'human-vs-llm' && selectedSide === 'red' ? '你' : profileName(profiles.red)}</h2><button className="profile-link" type="button" onClick={() => openSettings('red')}>配置红方模型</button></div><span className="turn-badge turn-badge--current">先手</span></aside>
-      <section className="control-card" aria-labelledby="control-title"><div className="control-heading"><div><p className="eyebrow">当前对局</p><h2 id="control-title">{labels[mode]}</h2></div><span className="round-count">第 0 / 200 回合</span></div><p className="control-subtitle">{subtitle}</p>{mode === 'human-vs-llm' && <div className="side-picker" aria-label="选择玩家执棋方"><span>执棋方</span>{(['red', 'black'] as Side[]).map((side) => <button type="button" key={side} className={selectedSide === side ? `side-button side-button--${side} is-active` : `side-button side-button--${side}`} onClick={() => { setSelectedSide(side); setNotice(`已选择${side === 'red' ? '红方' : '黑方'}。`); }}>{side === 'red' ? '红方' : '黑方'}</button>)}</div>}<div className="control-actions"><button type="button" className="primary-button" onClick={() => openSettings()}>配置模型后开局 <span aria-hidden="true">→</span></button><button type="button" className="secondary-button" onClick={() => { setSelectedPiece(null); setNotice('已恢复标准开局。'); }}>重新开始</button></div><div className="notice" role="status" aria-live="polite"><span aria-hidden="true">✦</span>{notice}</div></section>
+      <section className="control-card" aria-labelledby="control-title"><div className="control-heading"><div><p className="eyebrow">当前对局</p><h2 id="control-title">{labels[mode]}</h2></div><span className={`round-count ${gameOver ? 'round-count--finished' : ''}`}>{gameOver ? describeResult(result) : `第 ${Math.ceil(history.length / 2) || 1} 回合 · ${turn === 'red' ? '红方走' : '黑方走'}`}</span></div><p className="control-subtitle">{subtitle}</p>{mode === 'human-vs-llm' && <div className="side-picker" aria-label="选择玩家执棋方"><span>执棋方</span>{(['red', 'black'] as Side[]).map((side) => <button type="button" key={side} className={selectedSide === side ? `side-button side-button--${side} is-active` : `side-button side-button--${side}`} onClick={() => { setSelectedSide(side); setNotice(`已选择${side === 'red' ? '红方' : '黑方'}。`); }}>{side === 'red' ? '红方' : '黑方'}</button>)}</div>}<div className="control-actions"><button type="button" className="primary-button" onClick={() => openSettings()}>配置模型后开局 <span aria-hidden="true">→</span></button><button type="button" className="secondary-button" onClick={resetGame}>重新开始</button></div><div className="notice" role="status" aria-live="polite"><span aria-hidden="true">✦</span>{notice}</div></section>
     </section>
 
     <section className="principles" aria-label="产品原则"><article><span>01</span><h2>规则优先</h2><p>合法走法、将军与终局，都由规则引擎裁决。</p></article><article><span>02</span><h2>密钥不留存</h2><p>仅保存供应商、模型和 Base URL；Key 只在当前会话内。</p></article><article><span>03</span><h2>双边配置</h2><p>红黑双方可分别选择模型，也可使用同一服务商。</p></article></section>

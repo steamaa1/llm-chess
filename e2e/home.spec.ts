@@ -8,7 +8,15 @@ test('shows the application headline and recoverable API failure state', async (
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '让语言模型，下一盘真正的象棋。' })).toBeVisible();
   await expect(page.getByText('服务暂不可用', { exact: true })).toBeVisible();
-  await expect(page.getByText('正在准备标准开局。')).toBeVisible();
+  await expect(page.getByText('红方先行，请选择一枚红方棋子。')).toBeVisible();
+});
+
+test('shows strict legal landing points and moves a selected piece', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '红方兵，一路第7行' }).click();
+  await expect(page.getByRole('button', { name: '走到一路第6行' })).toBeVisible();
+  await page.getByRole('button', { name: '走到一路第6行' }).click();
+  await expect(page.getByText('现在轮到黑方走棋。')).toBeVisible();
 });
 
 test('saves a provider profile without persisting the API key', async ({ page }) => {
