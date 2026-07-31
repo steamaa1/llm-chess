@@ -16,7 +16,7 @@ jobs:
       - run: npm run test:e2e
   deploy:
     needs: verify
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.CF_ACCOUNT_ID != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
