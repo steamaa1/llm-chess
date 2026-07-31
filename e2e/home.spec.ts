@@ -19,6 +19,21 @@ test('shows strict legal landing points and moves a selected piece', async ({ pa
   await expect(page.getByText('现在轮到黑方走棋。')).toBeVisible();
 });
 
+test('shows a recoverable error when starting without an API key', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '开始对局' }).click();
+  await expect(page.getByRole('alert')).toContainText('API_KEY_MISSING');
+  await expect(page.getByRole('dialog', { name: '保存模型供应商' })).toBeVisible();
+});
+
+test('opens the public analysis page without claiming hidden chain of thought', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '对局分析' }).click();
+  await expect(page.getByRole('heading', { name: '对局分析' })).toBeVisible();
+  await expect(page.getByText('这里不请求或展示模型隐藏思维链。')).toBeVisible();
+  await expect(page.getByText('尚无分析记录')).toBeVisible();
+});
+
 test('saves a provider profile without persisting the API key', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '打开模型配置' }).click();

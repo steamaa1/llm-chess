@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { requestLlmMove, LlmRequestError } from './llmClient.js';
 import { createInitialPieces, gameResult, legalMovesForPiece, makeMove, type GamePiece, type GameResult, type Move } from '@llm-chess/xiangqi-core';
 
 type Health = { ok: true; data: { service: string; status: string } };
@@ -9,8 +10,12 @@ type SavedModelProfile = { provider: ProviderId; model: string; baseUrl: string 
 type ModelProfiles = Record<Side, SavedModelProfile>;
 type SessionKeys = Record<Side, string>;
 type DraftConfig = SavedModelProfile & { apiKey: string };
+type View = 'game' | 'analysis';
+type AnalysisEvent = { id: string; side: Side; move?: string; commentary?: string; status: 'requesting' | 'success' | 'error'; detail: string; at: string };
+type StoredGame = { schemaVersion: 1; savedAt: string; result: GameResult; moves: Move[]; analysis: AnalysisEvent[] };
 
 const STORAGE_KEY = 'llm-chess:model-profiles:v1';
+const GAMES_KEY = 'llm-chess:games:v1';
 const DEFAULT_PROFILE: SavedModelProfile = { provider: 'deepseek', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' };
 const PROVIDERS: Record<ProviderId, { label: string; baseUrl: string; model: string }> = {
   custom: { label: 'OpenAI 兼容接口', baseUrl: '', model: '' },
@@ -71,6 +76,12 @@ export function App() {
   const [sessionKeys, setSessionKeys] = useState<SessionKeys>({ red: '', black: '' });
   const [draft, setDraft] = useState<DraftConfig>(() => ({ ...readProfiles().red, apiKey: '' }));
   const [formError, setFormError] = useState('');
+  const [view, setView] = useState<View>('game');
+  const [started, setStarted] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [llmBusy, setLlmBusy] = useState(false);
+  const [appError, setAppError] = useState<{ code: string; message: string } | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisEvent[]>([]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -88,6 +99,24 @@ export function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  useEffect(() => {
+    const aiTurn = mode === 'llm-vs-llm' || turn !== selectedSide;
+    if (!started || paused || llmBusy || result !== 'playing' || !aiTurn) return;
+    const profile = profiles[turn]; const apiKey = sessionKeys[turn];
+    if (!apiKey) { setStarted(false); setPaused(true); setAppError({ code: 'API_KEY_MISSING', message: `${turn === 'red' ? '红方' : '黑方'}尚未填写 API Key。` }); return; }
+    const eventId = crypto.randomUUID();
+    setLlmBusy(true); setAppError(null);
+    setAnalysis((current) => [...current, { id: eventId, side: turn, status: 'requesting', detail: `正在请求 ${profile.model} 选择合法着法…`, at: new Date().toISOString() }]);
+    requestLlmMove({ ...profile, apiKey }, turn, history.map((move) => ({ from: move.from, to: move.to }))).then((response) => {
+      setAnalysis((current) => current.map((event) => event.id === eventId ? { ...event, status: 'success', move: response.move.notation, commentary: response.commentary, detail: `${response.provider} / ${response.model} · ${response.durationMs}ms` } : event));
+      commitMove(response.move, response.commentary);
+    }).catch((error: unknown) => {
+      const normalized = error instanceof LlmRequestError ? error : new LlmRequestError('UNKNOWN_ERROR', '模型走棋发生未知错误。');
+      setAnalysis((current) => current.map((event) => event.id === eventId ? { ...event, status: 'error', detail: `${normalized.code}：${normalized.message}` } : event));
+      setAppError({ code: normalized.code, message: normalized.message }); setPaused(true);
+    }).finally(() => setLlmBusy(false));
+  }, [history, llmBusy, mode, paused, profiles, result, selectedSide, sessionKeys, started, turn]);
 
   const currentSideLabel = selectedSide === 'red' ? '红方' : '黑方';
   const subtitle = useMemo(() => mode === 'human-vs-llm' ? `你执${currentSideLabel}，等待第一步。` : '红黑双方将各自向模型请求着法。', [currentSideLabel, mode]);
@@ -115,14 +144,18 @@ export function App() {
     return '';
   }
 
-  function commitMove(move: Move) {
+  function commitMove(move: Move, commentary?: string) {
     if (gameOver) return;
     const nextPieces = makeMove(pieces, move); const nextTurn = turn === 'red' ? 'black' : 'red'; const nextResult = gameResult(nextPieces, nextTurn);
     setPieces(nextPieces); setTurn(nextTurn); setResult(nextResult); setHistory((current) => [...current, move]); setSelectedPiece(null);
+    if (!commentary) setAnalysis((current) => [...current, { id: crypto.randomUUID(), side: turn, move: move.notation, status: 'success', detail: '玩家走棋 · 规则引擎校验通过', at: new Date().toISOString() }]);
+    if (nextResult !== 'playing') setStarted(false);
     setNotice(nextResult === 'playing' ? `${move.notation}${move.captureId ? '，吃子' : ''}${move.givesCheck ? '，将军！' : ''} 现在轮到${nextTurn === 'red' ? '红方' : '黑方'}走棋。` : describeResult(nextResult));
   }
 
   function selectPiece(piece: GamePiece) {
+    const aiTurn = mode === 'llm-vs-llm' || turn !== selectedSide;
+    if (llmBusy || (started && aiTurn)) { setNotice('正在等待模型走棋，请稍候。'); return; }
     if (gameOver) { setNotice(describeResult(result)); return; }
     const targetMove = legalTargets.find((move) => move.to.file === piece.file && move.to.rank === piece.rank);
     if (targetMove) { commitMove(targetMove); return; }
@@ -132,7 +165,7 @@ export function App() {
     setSelectedPiece(piece.id); setNotice(moves.length ? `已选中${piece.side === 'red' ? '红方' : '黑方'}${piece.label}，亮点为合法落点。` : '该棋子当前没有合法走法。');
   }
 
-  function resetGame() { setPieces(createInitialPieces()); setTurn('red'); setResult('playing'); setHistory([]); setSelectedPiece(null); setNotice('已恢复标准开局，红方先行。'); }
+  function resetGame() { setPieces(createInitialPieces()); setTurn('red'); setResult('playing'); setHistory([]); setAnalysis([]); setStarted(false); setPaused(false); setAppError(null); setSelectedPiece(null); setNotice('已恢复标准开局，红方先行。'); }
 
   function undoMove() {
     if (!history.length) { setNotice('当前没有可以撤销的走法。'); return; }
@@ -170,19 +203,41 @@ export function App() {
     setEditingSide(side); setDraft({ ...profiles[side], apiKey: sessionKeys[side] }); setFormError('');
   }
 
-  return <main className="app-shell">
-    <header className="topbar"><a className="brand" href="#main-content" aria-label="LLM 象棋主页"><span className="brand-seal" aria-hidden="true">棋</span><span><strong>LLM 象棋</strong><small>CHINESE CHESS LAB</small></span></a><div className="topbar-actions"><span className={`service-pill service-pill--${status}`} aria-live="polite"><i aria-hidden="true" />{status === 'ready' ? '服务已就绪' : status === 'loading' ? '检查服务中' : '服务暂不可用'}</span><button className="icon-button" type="button" aria-label="打开模型配置" onClick={() => openSettings()}>⚙</button></div></header>
+  function startGame() {
+    const required: Side[] = mode === 'llm-vs-llm' ? ['red', 'black'] : [selectedSide === 'red' ? 'black' : 'red'];
+    const missing = required.find((side) => !sessionKeys[side]);
+    if (missing) { setAppError({ code: 'API_KEY_MISSING', message: `${missing === 'red' ? '红方' : '黑方'}需要填写 API Key 才能开始。` }); openSettings(missing); return; }
+    setAppError(null); setPaused(false); setStarted(true); setNotice(mode === 'llm-vs-llm' ? '自动对弈已开始。' : `人机对战已开始，你执${currentSideLabel}。`);
+  }
 
+  function saveGame() {
+    const record: StoredGame = { schemaVersion: 1, savedAt: new Date().toISOString(), result, moves: history, analysis };
+    let records: StoredGame[] = [];
+    try { records = JSON.parse(localStorage.getItem(GAMES_KEY) ?? '[]') as StoredGame[]; } catch { records = []; }
+    localStorage.setItem(GAMES_KEY, JSON.stringify([record, ...records].slice(0, 30)));
+    setNotice('棋谱已保存到当前浏览器，不包含 API Key。');
+  }
+
+  function download(content: string, name: string, type: string) {
+    const url = URL.createObjectURL(new Blob([content], { type })); const anchor = document.createElement('a'); anchor.href = url; anchor.download = name; anchor.click(); URL.revokeObjectURL(url);
+  }
+
+  return <main className="app-shell">
+    <header className="topbar"><a className="brand" href="#main-content" aria-label="LLM 象棋主页"><span className="brand-seal" aria-hidden="true">棋</span><span><strong>LLM 象棋</strong><small>CHINESE CHESS LAB</small></span></a><div className="topbar-actions"><nav className="view-switch" aria-label="页面切换"><button className={view === 'game' ? 'is-active' : ''} type="button" onClick={() => setView('game')}>棋局</button><button className={view === 'analysis' ? 'is-active' : ''} type="button" onClick={() => setView('analysis')}>对局分析</button></nav><span className={`service-pill service-pill--${status}`} aria-live="polite"><i aria-hidden="true" />{status === 'ready' ? '服务已就绪' : status === 'loading' ? '检查服务中' : '服务暂不可用'}</span><button className="icon-button" type="button" aria-label="打开模型配置" onClick={() => openSettings()}>⚙</button></div></header>
+
+    {appError && <div className="error-banner" role="alert"><strong>{appError.code}</strong><span>{appError.message}</span><button type="button" onClick={() => { setAppError(null); setPaused(false); }}>关闭并重试</button></div>}
+    {view === 'game' ? <>
     <section className="hero" aria-labelledby="page-title"><div><p className="eyebrow">AI × 楚河汉界</p><h1 id="page-title">让语言模型，下一盘真正的象棋。</h1><p className="hero-copy">规则由确定性引擎裁决，模型只在合法着法中做出选择。你可以执子对弈，也可以静观两位模型棋手交锋。</p></div><div className="mode-switch" role="tablist" aria-label="选择对局模式">{(Object.keys(labels) as Mode[]).map((item) => <button key={item} type="button" role="tab" aria-selected={mode === item} className={mode === item ? 'is-active' : ''} onClick={() => switchMode(item)}>{item === 'human-vs-llm' ? '人机对战' : 'LLM 对弈'}</button>)}</div></section>
 
     <section id="main-content" className="game-layout" aria-label="对局区">
       <aside className="player-card player-card--black"><div className="player-mark">黑</div><div><p>黑方棋手</p><h2>{mode === 'human-vs-llm' && selectedSide === 'black' ? '你' : profileName(profiles.black)}</h2><button className="profile-link" type="button" onClick={() => openSettings('black')}>配置黑方模型</button></div><span className="turn-badge">后手</span></aside>
       <section className="board-panel" aria-label="中国象棋棋盘"><div className="board-frame"><div className="board" role="application" aria-label="标准中国象棋开局，红方在下"><BoardLines /><div className="river" aria-hidden="true"><span>楚 河</span><span>漢 界</span></div>{legalTargets.map((move) => <button key={`target-${move.to.file}-${move.to.rank}`} className="legal-target" style={{ left: `${move.to.file * 12.5}%`, top: `${move.to.rank * (100 / 9)}%` }} type="button" aria-label={`走到${files[move.to.file]}路第${move.to.rank + 1}行`} onClick={() => commitMove(move)}><span /></button>)}{pieces.map((piece) => <button key={piece.id} className={`piece piece--${piece.side} ${selectedPiece === piece.id ? 'piece--selected' : ''}`} style={{ left: `${piece.file * 12.5}%`, top: `${piece.rank * (100 / 9)}%` }} type="button" aria-label={`${piece.side === 'red' ? '红方' : '黑方'}${piece.label}，${files[piece.file]}路第${piece.rank + 1}行`} aria-pressed={selectedPiece === piece.id} onClick={() => selectPiece(piece)}>{piece.label}</button>)}</div></div><p className="board-caption">红方在下 · 标准开局 · 点击棋子查看合法落点</p></section>
       <aside className="player-card player-card--red"><div className="player-mark">红</div><div><p>红方棋手</p><h2>{mode === 'human-vs-llm' && selectedSide === 'red' ? '你' : profileName(profiles.red)}</h2><button className="profile-link" type="button" onClick={() => openSettings('red')}>配置红方模型</button></div><span className="turn-badge turn-badge--current">先手</span></aside>
-      <section className="control-card" aria-labelledby="control-title"><div className="control-heading"><div><p className="eyebrow">当前对局</p><h2 id="control-title">{labels[mode]}</h2></div><span className={`round-count ${gameOver ? 'round-count--finished' : ''}`}>{gameOver ? describeResult(result) : `第 ${Math.ceil(history.length / 2) || 1} 回合 · ${turn === 'red' ? '红方走' : '黑方走'}`}</span></div><p className="control-subtitle">{subtitle}</p>{mode === 'human-vs-llm' && <div className="side-picker" aria-label="选择玩家执棋方"><span>执棋方</span>{(['red', 'black'] as Side[]).map((side) => <button type="button" key={side} className={selectedSide === side ? `side-button side-button--${side} is-active` : `side-button side-button--${side}`} onClick={() => { setSelectedSide(side); setNotice(`已选择${side === 'red' ? '红方' : '黑方'}。`); }}>{side === 'red' ? '红方' : '黑方'}</button>)}</div>}<div className="control-actions"><button type="button" className="primary-button" onClick={() => openSettings()}>配置模型后开局 <span aria-hidden="true">→</span></button><button type="button" className="secondary-button" disabled={!history.length} onClick={undoMove}>撤销一步</button><button type="button" className="secondary-button" onClick={resetGame}>重新开始</button></div><div className="move-history" aria-label="本局棋谱">{history.length ? history.slice(-8).map((move, index) => <span key={`${move.pieceId}-${index}`}>{move.notation}{move.givesCheck ? '+' : ''}</span>) : <span>棋谱会显示在这里</span>}</div><div className="notice" role="status" aria-live="polite"><span aria-hidden="true">✦</span>{notice}</div></section>
+      <section className="control-card" aria-labelledby="control-title"><div className="control-heading"><div><p className="eyebrow">当前对局</p><h2 id="control-title">{labels[mode]}</h2></div><span className={`round-count ${gameOver ? 'round-count--finished' : ''}`}>{gameOver ? describeResult(result) : `第 ${Math.ceil(history.length / 2) || 1} 回合 · ${turn === 'red' ? '红方走' : '黑方走'}`}</span></div><p className="control-subtitle">{subtitle}</p>{mode === 'human-vs-llm' && <div className="side-picker" aria-label="选择玩家执棋方"><span>执棋方</span>{(['red', 'black'] as Side[]).map((side) => <button type="button" key={side} className={selectedSide === side ? `side-button side-button--${side} is-active` : `side-button side-button--${side}`} onClick={() => { setSelectedSide(side); setNotice(`已选择${side === 'red' ? '红方' : '黑方'}。`); }}>{side === 'red' ? '红方' : '黑方'}</button>)}</div>}<div className="control-actions"><button type="button" className="primary-button" disabled={llmBusy} onClick={started ? () => setPaused((value) => !value) : startGame}>{llmBusy ? '模型思考中…' : started ? (paused ? '继续对局' : '暂停对局') : '开始对局'} <span aria-hidden="true">→</span></button><button type="button" className="secondary-button" onClick={() => openSettings()}>模型设置</button><button type="button" className="secondary-button" disabled={!history.length || llmBusy} onClick={undoMove}>撤销一步</button><button type="button" className="secondary-button" onClick={resetGame}>重新开始</button></div><div className="move-history" aria-label="本局棋谱">{history.length ? history.slice(-8).map((move, index) => <span key={`${move.pieceId}-${index}`}>{move.notation}{move.givesCheck ? '+' : ''}</span>) : <span>棋谱会显示在这里</span>}</div><div className="notice" role="status" aria-live="polite"><span aria-hidden="true">✦</span>{notice}</div></section>
     </section>
 
-    <section className="principles" aria-label="产品原则"><article><span>01</span><h2>规则优先</h2><p>合法走法、将军与终局，都由规则引擎裁决。</p></article><article><span>02</span><h2>密钥不留存</h2><p>仅保存供应商、模型和 Base URL；Key 只在当前会话内。</p></article><article><span>03</span><h2>双边配置</h2><p>红黑双方可分别选择模型，也可使用同一服务商。</p></article></section>
+    <section className="principles" aria-label="产品原则"><article><span>01</span><h2>规则优先</h2><p>合法走法、将军与终局，都由规则引擎裁决。</p></article><article><span>02</span><h2>密钥不留存</h2><p>仅保存供应商、模型和 Base URL；Key 只在当前会话内。</p></article><article><span>03</span><h2>公开说明</h2><p>展示模型主动提供的短评，不显示隐藏思维链。</p></article></section>
+    </> : <section className="analysis-page"><div className="analysis-heading"><div><p className="eyebrow">AUDITABLE GAME TRACE</p><h1>对局分析</h1><p>查看公开走棋说明、规则校验和错误事件。这里不请求或展示模型隐藏思维链。</p></div><div className="analysis-actions"><button className="secondary-button" type="button" onClick={saveGame}>保存棋谱</button><button className="secondary-button" type="button" onClick={() => download(JSON.stringify({ schemaVersion: 1, result, moves: history, analysis }, null, 2), 'llm-chess-game.json', 'application/json')}>导出 JSON</button><button className="secondary-button" type="button" onClick={() => download(history.map((move, index) => `${index + 1}. ${move.notation}`).join('\n'), 'llm-chess-game.txt', 'text/plain')}>导出文本</button></div></div><div className="analysis-timeline">{analysis.length ? analysis.map((event) => <article className={`analysis-event analysis-event--${event.status}`} key={event.id}><span className="analysis-dot" /><div><header><strong>{event.side === 'red' ? '红方' : '黑方'}{event.move ? ` · ${event.move}` : ''}</strong><time>{new Date(event.at).toLocaleTimeString('zh-CN')}</time></header>{event.commentary && <blockquote>{event.commentary}</blockquote>}<p>{event.detail}</p></div></article>) : <div className="analysis-empty"><span>谱</span><h2>尚无分析记录</h2><p>开始对局后，模型请求、公开说明和错误会按时间显示在这里。</p></div>}</div></section>}
 
     {isSettingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsSettingsOpen(false)}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="关闭模型配置" onClick={() => setIsSettingsOpen(false)}>×</button><p className="eyebrow">连接配置</p><h2 id="settings-title">保存模型供应商</h2><p>服务商、模型名、Base URL 会安全保存到此浏览器；API Key <strong>永不写入本地存储</strong>，刷新页面后需重新填写。</p><div className="config-side-tabs" role="tablist" aria-label="选择要配置的一方">{(['red', 'black'] as Side[]).map((side) => <button type="button" role="tab" aria-selected={editingSide === side} className={editingSide === side ? `is-active side-${side}` : `side-${side}`} key={side} onClick={() => switchEditingSide(side)}>{side === 'red' ? '红方模型' : '黑方模型'}</button>)}</div><div className="setting-grid"><label>服务商<select value={draft.provider} onChange={(event) => selectProvider(event.target.value as ProviderId)}>{(Object.keys(PROVIDERS) as ProviderId[]).map((provider) => <option value={provider} key={provider}>{PROVIDERS[provider].label}</option>)}</select></label><label>模型名称<input value={draft.model} onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))} placeholder="例如：deepseek-chat" autoComplete="off" /></label><label className="span-all">Base URL<input value={draft.baseUrl} onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" inputMode="url" autoComplete="off" /></label><label className="span-all">API Key <span className="field-hint">仅限当前会话，可留空后稍后填写</span><input type="password" value={draft.apiKey} onChange={(event) => setDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder="不会保存到浏览器" autoComplete="off" /></label></div>{formError && <p className="form-error" role="alert">{formError}</p>}<button type="button" className="primary-button" onClick={saveProfile}>保存 {editingSide === 'red' ? '红方' : '黑方'}供应商</button></section></div>}
   </main>;

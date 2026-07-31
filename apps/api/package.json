@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@llm-chess/shared": "*",
+    "@llm-chess/xiangqi-core": "^0.1.0",
     "hono": "^4.9.6"
   }
 }

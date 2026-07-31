@@ -1,8 +1,24 @@
 {
   "compilerOptions": {
-    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext", "strict": true,
-    "noUncheckedIndexedAccess": true, "composite": true, "rootDir": "./src", "outDir": "./dist", "skipLibCheck": true
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "composite": true,
+    "rootDir": "./src",
+    "outDir": "./dist",
+    "skipLibCheck": true
   },
-  "references": [{ "path": "../../packages/shared" }],
-  "include": ["src/**/*.ts"]
+  "references": [
+    {
+      "path": "../../packages/shared"
+    },
+    {
+      "path": "../../packages/xiangqi-core"
+    }
+  ],
+  "include": [
+    "src/**/*.ts"
+  ]
 }
