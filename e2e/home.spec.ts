@@ -45,7 +45,7 @@ test('opens the public analysis page without claiming hidden chain of thought', 
 });
 
 test('saves a provider profile and encrypts the API key in the browser', async ({ page }) => {
-  await page.goto('/');
+  await enterGame(page);
   await page.getByRole('button', { name: '打开模型配置' }).click();
   await page.getByRole('tab', { name: '红方模型' }).click();
   await page.getByLabel('模型名称').fill('saved-test-model');
