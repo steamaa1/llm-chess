@@ -4,7 +4,7 @@ export type PieceKind = 'rook' | 'horse' | 'elephant' | 'advisor' | 'general' | 
 export type Position = { file: number; rank: number };
 export type GamePiece = Position & { id: string; side: Side; kind: PieceKind; label: string };
 export type Move = { from: Position; to: Position; pieceId: string; captureId?: string; notation: string; givesCheck: boolean };
-export type GameResult = 'playing' | 'red_wins_checkmate' | 'black_wins_checkmate' | 'red_wins_stalemate' | 'black_wins_stalemate' | 'draw_repetition' | 'move_limit_reached';
+export type GameResult = 'playing' | 'red_wins_checkmate' | 'black_wins_checkmate' | 'red_wins_stalemate' | 'black_wins_stalemate' | 'red_wins_long_check' | 'black_wins_long_check' | 'draw_repetition' | 'move_limit_reached';
 
 const FILES = ['一', '二', '三', '四', '五', '六', '七', '八', '九'];
 const LABELS: Record<Side, Record<PieceKind, string>> = {

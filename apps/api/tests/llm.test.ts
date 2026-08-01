@@ -6,7 +6,7 @@ describe('POST /api/llm/move', () => {
     const response = await app.request('/api/llm/move', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: { provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: 'test-key' }, side: 'black', moves: [] })
+      body: JSON.stringify({ config: { provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: 'test-key' }, side: 'black', moves: [], gameSeed: 'test-seed' })
     });
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ ok: false, error: { code: 'INVALID_GAME_STATE' } });
@@ -16,7 +16,7 @@ describe('POST /api/llm/move', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ moveId: 'red-pawn-0:06-05', commentary: '推进边兵，保持阵型完整。' }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     const response = await app.request('/api/llm/move', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: { provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: 'test-key' }, side: 'red', moves: [] })
+      body: JSON.stringify({ config: { provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: 'test-key' }, side: 'red', moves: [], gameSeed: 'test-seed' })
     });
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ ok: true, data: { move: { notation: expect.any(String) }, commentary: '推进边兵，保持阵型完整。' } });

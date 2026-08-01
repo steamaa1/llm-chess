@@ -17,6 +17,7 @@ test('shows strict legal landing points and moves a selected piece', async ({ pa
   await expect(page.getByRole('button', { name: '走到一路第6行' })).toBeVisible();
   await page.getByRole('button', { name: '走到一路第6行' }).click();
   await expect(page.getByText('现在轮到黑方走棋。')).toBeVisible();
+  await expect(page.locator('.last-move-mark')).toHaveCount(2);
 });
 
 test('shows a recoverable error when starting without an API key', async ({ page }) => {
@@ -33,6 +34,7 @@ test('opens the public analysis page without claiming hidden chain of thought', 
   await expect(page.getByText('这里不请求或展示模型隐藏思维链。')).toBeVisible();
   await expect(page.getByText('尚无分析记录')).toBeVisible();
   await expect(page.getByText('导入棋谱')).toBeVisible();
+  await expect(page.getByText('还没有保存的棋谱。')).toBeVisible();
 });
 
 test('saves a provider profile without persisting the API key', async ({ page }) => {
