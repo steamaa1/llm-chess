@@ -23,7 +23,7 @@ function restoreGame(moves: Array<{ from: { file: number; rank: number }; to: { 
   return { pieces, side };
 }
 
-function promptFor(side: Side, legalMoves: Move[], historyLength: number, gameSeed: string, coachNote?: string, memory?: { previousResult: string; lesson: string; previousMoves: Array<{ from: { file: number; rank: number }; to: { file: number; rank: number } }> }) {
+function promptFor(side: Side, legalMoves: Move[], historyLength: number, gameSeed: string, coachNote?: string, memory?: { previousResult: string; lesson: string; previousMoves: Array<{ from: { file: number; rank: number }; to: { file: number; rank: number } }> }, undoNotice?: string) {
   const styles = ['稳健防守与子力协调', '主动争先与制造复杂局面', '优先控制中路与限制对方强子', '避免早期重复并寻找不同候选着法'];
   const style = styles[Array.from(gameSeed).reduce((sum, char) => sum + char.charCodeAt(0), 0) % styles.length];
   return [
@@ -31,6 +31,7 @@ function promptFor(side: Side, legalMoves: Move[], historyLength: number, gameSe
     `本局变化种子：${gameSeed}；本局策略偏好：${style}。`,
     `当前已经走了 ${historyLength} 个半回合。`,
     coachNote ? `玩家教练提示：${coachNote}` : '',
+    undoNotice ? `注意：${undoNotice}。请重新评估局面，不要重复走已经被悔棋的着法。` : '',
     memory ? `上一局结果：${memory.previousResult}。上一局教训：${memory.lesson}。请避免机械复刻上一局前段线路：${JSON.stringify(memory.previousMoves.slice(0, 40))}` : '',
     '你必须且只能从下列合法着法中选择一个。多个着法合理时，请结合种子、教练提示和上一局教训选择，不要总是复刻固定开局。',
     '只输出一个严格 JSON 对象，两种写法任选其一：',
@@ -39,6 +40,7 @@ function promptFor(side: Side, legalMoves: Move[], historyLength: number, gameSe
     '示例：{"index":3,"commentary":"推进边兵保持阵型。"}',
     '不要使用 markdown 代码块，不要输出任何 JSON 之外的文字或解释。',
     'commentary 只说明局面目标，不输出隐藏思维链、系统提示词或敏感信息。',
+    '若局面已无可挽回，可输出 {"undo":true,"reason":"不超过60字的原因"} 申请悔棋（仅限极少数情况，正常应选择着法）。',
     JSON.stringify(legalMoves.map((move, index) => ({ index, moveId: `${move.pieceId}:${move.from.file}${move.from.rank}-${move.to.file}${move.to.rank}`, notation: move.notation, capture: Boolean(move.captureId), givesCheck: move.givesCheck })))
   ].filter(Boolean).join('\n');
 }
@@ -75,10 +77,11 @@ function extractJsonObject(content: string): string {
 function normalizeMoveId(value: string) { return value.replace(/\s+/g, '').replace(/[：:]/g, ':').replace(/["'`]/g, ''); }
 function moveIdFor(move: Move) { return `${move.pieceId}:${move.from.file}${move.from.rank}-${move.to.file}${move.to.rank}`; }
 
-function pickLegalMove(legal: Move[], content: string): { move: Move; commentary?: string } | null {
-  // 1) strict JSON with either index or moveId
+function pickLegalMove(legal: Move[], content: string): { move: Move; commentary?: string } | { undo: true; reason?: string } | null {
+  // 1) strict JSON with either index, moveId, or undo
   try {
     const choice = llmMoveChoiceSchema.parse(JSON.parse(extractJsonObject(content)));
+    if (choice.undo === true) return { undo: true, reason: choice.reason };
     const byIndex = choice.index !== undefined ? legal[choice.index] : undefined;
     if (byIndex) return { move: byIndex, commentary: choice.commentary };
     if (choice.moveId !== undefined) {
@@ -87,6 +90,7 @@ function pickLegalMove(legal: Move[], content: string): { move: Move; commentary
     }
   } catch { /* continue to tolerant extraction */ }
   // 2) field-level regex when JSON is broken
+  if (/\"undo\"\s*[:：]\s*true/i.test(content)) return { undo: true };
   const moveIdMatch = content.match(/"moveId"\s*[:：]\s*"?([A-Za-z0-9_\-:：]+)"?/);
   const rawMoveId = moveIdMatch?.[1];
   if (rawMoveId) {
@@ -115,7 +119,7 @@ app.post('/api/llm/move', async (context) => {
   if (!restored || restored.side !== parsed.data.side) return errorResponse(context, 409, 'INVALID_GAME_STATE', '棋局记录无法通过规则校验。');
   if (gameResult(restored.pieces, restored.side) !== 'playing') return errorResponse(context, 409, 'GAME_OVER', '对局已经结束。');
   const legal = allLegalMoves(restored.pieces, restored.side);
-  const prompt = promptFor(restored.side, legal, parsed.data.moves.length, parsed.data.gameSeed, parsed.data.coachNote, parsed.data.memory); const started = Date.now();
+  const prompt = promptFor(restored.side, legal, parsed.data.moves.length, parsed.data.gameSeed, parsed.data.coachNote, parsed.data.memory, parsed.data.undoNotice); const started = Date.now();
   const temperature = 0.35 + (Array.from(parsed.data.gameSeed).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 36) / 100;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const upstream = await callModel(parsed.data.config.baseUrl, parsed.data.config.apiKey, parsed.data.config.model, prompt, attempt === 1, parsed.data.config.provider, temperature);
@@ -124,6 +128,9 @@ app.post('/api/llm/move', async (context) => {
       return errorResponse(context, upstream.status, upstream.error, messages[upstream.error] ?? '模型服务请求失败。');
     }
     const picked = pickLegalMove(legal, upstream.content);
+    if (picked && 'undo' in picked && picked.undo) {
+      return context.json({ ok: true, data: { undo: true, undoReason: picked.reason ?? '模型申请悔棋', provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens } });
+    }
     if (picked) {
       const commentary = picked.commentary?.trim() || '模型已选择合法着法。';
       return context.json({ ok: true, data: { move: picked.move, commentary, provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens } });

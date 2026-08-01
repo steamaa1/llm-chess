@@ -66,3 +66,19 @@ describe('multi-level move selection', () => {
     fetchMock.mockRestore();
   });
 });
+
+describe('undo requests', () => {
+  it('accepts an undo request from the model with a reason', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ undo: true, reason: '局面不利' }) } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const response = await app.request('/api/llm/move', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: { provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: 'test-key' }, side: 'red', moves: [], gameSeed: 'undo-test' })
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; data: { undo?: boolean; undoReason?: string } };
+    expect(body.ok).toBe(true);
+    expect(body.data.undo).toBe(true);
+    expect(body.data.undoReason).toBe('局面不利');
+    fetchMock.mockRestore();
+  });
+});

@@ -58,3 +58,24 @@ test('saves a provider profile and encrypts the API key in the browser', async (
   await expect(page.getByLabel('模型名称')).toHaveValue('saved-test-model');
   await expect(page.getByLabel(/API Key/)).toHaveValue('sk-test-key-123');
 });
+
+test('toggles legal targets when clicking the same piece again', async ({ page }) => {
+  await page.goto('/');
+  const pawn = page.getByRole('button', { name: '红方兵，一路第7行' });
+  await pawn.click();
+  await expect(page.getByRole('button', { name: '走到一路第6行' })).toBeVisible();
+  await pawn.click();
+  await expect(page.getByRole('button', { name: '走到一路第6行' })).toHaveCount(0);
+  await pawn.click();
+  await expect(page.getByRole('button', { name: '走到一路第6行' })).toBeVisible();
+});
+
+test('undoes to the player last move when 悔棋 is clicked', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '红方兵，一路第7行' }).click();
+  await page.getByRole('button', { name: '走到一路第6行' }).click();
+  await expect(page.getByText('现在轮到黑方走棋。')).toBeVisible();
+  await page.getByRole('button', { name: '悔棋' }).click();
+  await expect(page.getByText('悔棋成功')).toBeVisible();
+  await expect(page.getByText('现在轮到红方走棋。')).toBeVisible();
+});

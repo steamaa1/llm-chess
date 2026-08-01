@@ -2,9 +2,9 @@ import { llmMoveResponseSchema, type CompactMove } from '@llm-chess/shared';
 import type { Move, Side } from '@llm-chess/xiangqi-core';
 
 export type LlmConfig = { provider: 'custom' | 'openai' | 'deepseek' | 'siliconflow'; baseUrl: string; model: string; apiKey: string };
-export type LlmTurn = { move: Move; commentary: string; provider: string; model: string; durationMs: number; promptTokens: number; completionTokens: number };
+export type LlmTurn = { move?: Move; commentary?: string; undo?: boolean; undoReason?: string; provider: string; model: string; durationMs: number; promptTokens: number; completionTokens: number };
 export type LlmMemory = { previousResult: string; lesson: string; previousMoves: CompactMove[] };
-export type LlmContext = { gameSeed: string; coachNote?: string; memory?: LlmMemory };
+export type LlmContext = { gameSeed: string; coachNote?: string; memory?: LlmMemory; undoNotice?: string };
 export class LlmRequestError extends Error { constructor(public code: string, message: string) { super(message); this.name = 'LlmRequestError'; } }
 
 export async function requestLlmMove(config: LlmConfig, side: Side, moves: CompactMove[], context: LlmContext): Promise<LlmTurn> {

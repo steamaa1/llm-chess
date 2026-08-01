@@ -20,24 +20,29 @@ export const llmMoveRequestSchema = z.object({
   moves: z.array(compactMoveSchema).max(800),
   gameSeed: z.string().trim().min(1).max(80),
   coachNote: z.string().trim().max(300).optional(),
-  memory: llmMemorySchema.optional()
+  memory: llmMemorySchema.optional(),
+  undoNotice: z.string().trim().max(300).optional()
 }).strict();
 export const llmMoveChoiceSchema = z.object({
   moveId: z.string().trim().min(1).max(160).optional(),
   index: z.number().int().min(0).max(200).optional(),
-  commentary: z.string().trim().max(180).optional()
-}).strict().refine((value) => value.moveId !== undefined || value.index !== undefined, '必须提供 moveId 或 index');
+  commentary: z.string().trim().max(180).optional(),
+  undo: z.boolean().optional(),
+  reason: z.string().trim().max(120).optional()
+}).strict().refine((value) => value.moveId !== undefined || value.index !== undefined || value.undo === true, '必须提供 moveId、index 或 undo');
 export const llmMoveResponseSchema = z.object({
   ok: z.literal(true),
   data: z.object({
+    undo: z.boolean().optional(),
+    undoReason: z.string().trim().max(120).optional(),
     move: z.object({
       pieceId: z.string(), from: coordinateSchema, to: coordinateSchema,
       captureId: z.string().optional(), notation: z.string(), givesCheck: z.boolean()
-    }).strict(),
-    commentary: z.string().max(180),
+    }).strict().optional(),
+    commentary: z.string().max(180).optional(),
     provider: z.string(), model: z.string(), durationMs: z.number().nonnegative(),
     promptTokens: z.number().int().nonnegative(), completionTokens: z.number().int().nonnegative()
-  }).strict()
+  }).strict().refine((value) => value.undo === true || value.move !== undefined, '必须返回 undo 或 move')
 }).strict();
 
 export type CompactMove = z.infer<typeof compactMoveSchema>;

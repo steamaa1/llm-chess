@@ -112,6 +112,9 @@ export function App() {
   const [gameSeed, setGameSeed] = useState(() => Math.random().toString(36).slice(2, 10));
   const [coachNotes, setCoachNotes] = useState<Record<Side, string>>({ red: '', black: '' });
   const [lastMove, setLastMove] = useState<Move | null>(null);
+  const [lastEvent, setLastEvent] = useState<{ side: Side; kind: 'check' | 'capture' | 'undo' | 'info'; text: string } | null>(null);
+  const [pendingUndoNotice, setPendingUndoNotice] = useState<string | null>(null);
+  const [llmUndoCount, setLlmUndoCount] = useState(0);
   const [gameSpeed, setGameSpeed] = useState<'slow' | 'normal' | 'fast'>('normal');
   const [callCount, setCallCount] = useState(0);
   const [savedGames, setSavedGames] = useState<StoredGame[]>(readSavedGames);
@@ -146,10 +149,17 @@ export function App() {
       setAnalysis((current) => [...current, { id: eventId, side: turn, status: 'requesting', detail: `正在请求 ${profile.model} 选择合法着法…`, at: new Date().toISOString() }]);
       let memory: LlmMemory | undefined;
       try { const memories = JSON.parse(localStorage.getItem(MEMORY_KEY) ?? '{}') as Partial<Record<Side, LlmMemory>>; memory = memories[turn]; } catch { memory = undefined; }
-      requestLlmMove({ ...profile, apiKey }, turn, history.map((move) => ({ from: move.from, to: move.to })), { gameSeed, coachNote: coachNotes[turn] || undefined, memory }).then((response) => {
+      requestLlmMove({ ...profile, apiKey }, turn, history.map((move) => ({ from: move.from, to: move.to })), { gameSeed, coachNote: coachNotes[turn] || undefined, memory, undoNotice: pendingUndoNotice ?? undefined }).then((response) => {
+        if (response.undo) {
+          if (llmUndoCount >= 5) { setPaused(true); setAppError({ code: 'UNDO_LIMIT', message: '模型连续悔棋次数过多，已暂停对局。' }); return; }
+          setLlmUndoCount((count) => count + 1);
+          requestUndo(turn, response.undoReason ?? '模型申请悔棋');
+          return;
+        }
         setCallCount((count) => count + 1);
-        setAnalysis((current) => current.map((event) => event.id === eventId ? { ...event, status: 'success', move: response.move.notation, commentary: response.commentary, detail: `${response.provider} / ${response.model} · ${response.durationMs}ms · ${response.promptTokens + response.completionTokens} tokens`, promptTokens: response.promptTokens, completionTokens: response.completionTokens } : event));
-        commitMove(response.move, response.commentary);
+        setPendingUndoNotice(null);
+        setAnalysis((current) => current.map((event) => event.id === eventId ? { ...event, status: 'success', move: response.move?.notation, commentary: response.commentary, detail: `${response.provider} / ${response.model} · ${response.durationMs}ms · ${response.promptTokens + response.completionTokens} tokens`, promptTokens: response.promptTokens, completionTokens: response.completionTokens } : event));
+        if (response.move) commitMove(response.move, response.commentary);
       }).catch((error: unknown) => {
         const normalized = error instanceof LlmRequestError ? error : new LlmRequestError('UNKNOWN_ERROR', '模型走棋发生未知错误。');
         setAnalysis((current) => current.map((event) => event.id === eventId ? { ...event, status: 'error', detail: `${normalized.code}：${normalized.message}` } : event));
@@ -157,7 +167,7 @@ export function App() {
       }).finally(() => setLlmBusy(false));
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [coachNotes, gameSeed, gameSpeed, history, llmBusy, mode, paused, profiles, replayIndex, result, selectedSide, sessionKeys, started, turn]);
+  }, [coachNotes, gameSeed, gameSpeed, history, llmBusy, llmUndoCount, mode, paused, pendingUndoNotice, profiles, replayIndex, result, selectedSide, sessionKeys, started, turn]);
 
   const currentSideLabel = selectedSide === 'red' ? '红方' : '黑方';
   const subtitle = useMemo(() => mode === 'human-vs-llm' ? `你执${currentSideLabel}，等待第一步。` : '红黑双方将各自向模型请求着法。', [currentSideLabel, mode]);
@@ -192,7 +202,11 @@ export function App() {
   function commitMove(move: Move, commentary?: string) {
     if (gameOver) return;
     const nextPieces = makeMove(pieces, move);
-    setLastMove(move); const nextTurn = turn === 'red' ? 'black' : 'red'; const nextHistory = [...history, move];
+    setLastMove(move); setPendingUndoNotice(null);
+    const kind = move.givesCheck ? 'check' : move.captureId ? 'capture' : 'info';
+    const parts: string[] = []; if (move.captureId) parts.push('吃子'); if (move.givesCheck) parts.push('将军');
+    setLastEvent({ side: turn, kind, text: `${turn === 'red' ? '红方' : '黑方'}${parts.length ? parts.join('，') : '落子'}：${move.notation}` });
+    const nextTurn = turn === 'red' ? 'black' : 'red'; const nextHistory = [...history, move];
     let nextResult = gameResult(nextPieces, nextTurn);
     if (nextResult === 'playing' && nextHistory.length >= 400) nextResult = 'move_limit_reached';
     if (nextResult === 'playing') {
@@ -218,6 +232,7 @@ export function App() {
     const aiTurn = mode === 'llm-vs-llm' || turn !== selectedSide;
     if (llmBusy || (started && aiTurn)) { setNotice('正在等待模型走棋，请稍候。'); return; }
     if (gameOver) { setNotice(describeResult(result)); return; }
+    if (selectedPiece === piece.id) { setSelectedPiece(null); setNotice('已取消显示合法落点。'); return; }
     const targetMove = legalTargets.find((move) => move.to.file === piece.file && move.to.rank === piece.rank);
     if (targetMove) { commitMove(targetMove); return; }
     if (piece.side !== turn) { setNotice(`现在轮到${turn === 'red' ? '红方' : '黑方'}走棋。`); return; }
@@ -226,15 +241,23 @@ export function App() {
     setSelectedPiece(piece.id); setNotice(moves.length ? `已选中${piece.side === 'red' ? '红方' : '黑方'}${piece.label}，亮点为合法落点。` : '该棋子当前没有合法走法。');
   }
 
-  function resetGame() { setGameSeed(Math.random().toString(36).slice(2, 10)); setLlmBusy(false); setCallCount(0); setLastMove(null); setReplayIndex(null); setPieces(createInitialPieces()); setTurn('red'); setResult('playing'); setHistory([]); setAnalysis([]); setStarted(false); setPaused(false); setAppError(null); setSelectedPiece(null); setNotice('已恢复标准开局，红方先行。'); }
+  function resetGame() { setGameSeed(Math.random().toString(36).slice(2, 10)); setLlmBusy(false); setCallCount(0); setLastMove(null); setLastEvent(null); setPendingUndoNotice(null); setLlmUndoCount(0); setReplayIndex(null); setPieces(createInitialPieces()); setTurn('red'); setResult('playing'); setHistory([]); setAnalysis([]); setStarted(false); setPaused(false); setAppError(null); setSelectedPiece(null); setNotice('已恢复标准开局，红方先行。'); }
 
-  function undoMove() {
-    if (!history.length) { setNotice('当前没有可以撤销的走法。'); return; }
-    const nextHistory = history.slice(0, -1); let restored = createInitialPieces();
+  function requestUndo(side: Side, reason: string) {
+    let lastIndex = -1;
+    for (let index = history.length - 1; index >= 0; index -= 1) {
+      if (history[index].pieceId.startsWith(side === 'red' ? 'r' : 'b')) { lastIndex = index; break; }
+    }
+    if (lastIndex === -1) { setNotice('当前还没有可以悔的棋。'); return; }
+    const nextHistory = history.slice(0, lastIndex); let restored = createInitialPieces();
     nextHistory.forEach((move) => { restored = makeMove(restored, move); });
     const nextTurn: Side = nextHistory.length % 2 === 0 ? 'red' : 'black';
-    setLastMove(nextHistory[nextHistory.length - 1] ?? null); setPieces(restored); setHistory(nextHistory); setTurn(nextTurn); setResult(gameResult(restored, nextTurn)); setSelectedPiece(null);
-    setNotice(`已撤销一步，现在轮到${nextTurn === 'red' ? '红方' : '黑方'}走棋。`);
+    const nextResult = gameResult(restored, nextTurn);
+    setLastMove(nextHistory[nextHistory.length - 1] ?? null); setPieces(restored); setHistory(nextHistory); setTurn(nextTurn); setResult(nextResult); setSelectedPiece(null);
+    setLastEvent({ side, kind: 'undo', text: `${side === 'red' ? '红方' : '黑方'}悔棋：${reason}` });
+    setPendingUndoNotice(`${side === 'red' ? '红方' : '黑方'}刚刚悔棋：${reason}`);
+    setAnalysis((current) => [...current, { id: crypto.randomUUID(), side, status: 'success', detail: `悔棋：${reason}`, at: new Date().toISOString() }]);
+    setNotice(`悔棋成功，现在轮到${nextTurn === 'red' ? '红方' : '黑方'}走棋。`);
   }
 
   function selectProvider(provider: ProviderId) {
@@ -340,10 +363,11 @@ export function App() {
 
     <section id="main-content" className="game-layout" aria-label="对局区">
       <aside className="player-card player-card--black"><div className="player-mark">黑</div><div><p>黑方棋手</p><h2>{mode === 'human-vs-llm' && selectedSide === 'black' ? '你' : profileName(profiles.black)}</h2><button className="profile-link" type="button" onClick={() => openSettings('black')}>配置黑方模型</button></div><span className="turn-badge">后手</span></aside>
-      <section className="board-panel" aria-label="中国象棋棋盘"><div className="board-frame"><div className="board" role="application" aria-label="标准中国象棋开局，红方在下" onDragOver={(event) => event.preventDefault()} onDrop={handleBoardDrop}><BoardLines /><div className="river" aria-hidden="true"><span>楚 河</span><span>漢 界</span></div>{lastMove && <><span className="last-move-mark last-move-mark--from" style={{ left: `${lastMove.from.file * 12.5}%`, top: `${lastMove.from.rank * (100 / 9)}%` }} aria-hidden="true" /><span className="last-move-mark last-move-mark--to" style={{ left: `${lastMove.to.file * 12.5}%`, top: `${lastMove.to.rank * (100 / 9)}%` }} aria-hidden="true" /></>}{legalTargets.map((move) => <button key={`target-${move.to.file}-${move.to.rank}`} className="legal-target" style={{ left: `${move.to.file * 12.5}%`, top: `${move.to.rank * (100 / 9)}%` }} type="button" aria-label={`走到${files[move.to.file]}路第${move.to.rank + 1}行`} onClick={() => commitMove(move)}><span /></button>)}{pieces.map((piece) => <button key={piece.id} className={`piece piece--${piece.side} ${selectedPiece === piece.id ? 'piece--selected' : ''}`} style={{ left: `${piece.file * 12.5}%`, top: `${piece.rank * (100 / 9)}%` }} type="button" aria-label={`${piece.side === 'red' ? '红方' : '黑方'}${piece.label}，${files[piece.file]}路第${piece.rank + 1}行`} aria-pressed={selectedPiece === piece.id} draggable onDragStart={(event) => handleDragStart(event, piece)} onClick={() => selectPiece(piece)}>{piece.label}</button>)}</div></div></section>
+      <section className="board-panel" aria-label="中国象棋棋盘"><div className="board-frame"><div className="board" role="application" aria-label="标准中国象棋开局，红方在下" onDragOver={(event) => event.preventDefault()} onDrop={handleBoardDrop}><BoardLines /><div className="river" aria-hidden="true"><span>楚 河</span><span>漢 界</span></div>{lastMove && <><span className="last-move-mark last-move-mark--from" style={{ left: `${lastMove.from.file * 12.5}%`, top: `${lastMove.from.rank * (100 / 9)}%` }} aria-hidden="true" /><span className="last-move-mark last-move-mark--to" style={{ left: `${lastMove.to.file * 12.5}%`, top: `${lastMove.to.rank * (100 / 9)}%` }} aria-hidden="true" /></>}{legalTargets.map((move) => <button key={`target-${move.to.file}-${move.to.rank}`} className={`legal-target ${move.captureId ? 'legal-target--capture' : ''}`} style={{ left: `${move.to.file * 12.5}%`, top: `${move.to.rank * (100 / 9)}%` }} type="button" aria-label={`${move.captureId ? '吃' : '走到'}${files[move.to.file]}路第${move.to.rank + 1}行`} onClick={() => commitMove(move)}><span /></button>)}{pieces.map((piece) => <button key={piece.id} className={`piece piece--${piece.side} ${selectedPiece === piece.id ? 'piece--selected' : ''}`} style={{ left: `${piece.file * 12.5}%`, top: `${piece.rank * (100 / 9)}%` }} type="button" aria-label={`${piece.side === 'red' ? '红方' : '黑方'}${piece.label}，${files[piece.file]}路第${piece.rank + 1}行`} aria-pressed={selectedPiece === piece.id} draggable onDragStart={(event) => handleDragStart(event, piece)} onClick={() => selectPiece(piece)}>{piece.label}</button>)}</div></div></section>
       <aside className="player-card player-card--red"><div className="player-mark">红</div><div><p>红方棋手</p><h2>{mode === 'human-vs-llm' && selectedSide === 'red' ? '你' : profileName(profiles.red)}</h2><button className="profile-link" type="button" onClick={() => openSettings('red')}>配置红方模型</button></div><span className="turn-badge turn-badge--current">先手</span></aside>
       <section className="error-spot" aria-live="polite">{appError && <div className="error-banner" role="alert"><span className="error-code">{appError.code}</span><span className="error-message">{appError.message}</span><button type="button" onClick={() => { setAppError(null); setPaused(false); }}>关闭并重试</button></div>}</section>
-      <section className="control-card" aria-labelledby="control-title"><div className="control-heading"><div><p className="eyebrow">当前对局</p><h2 id="control-title">{labels[mode]}</h2></div><span className={`round-count ${gameOver ? 'round-count--finished' : ''}`}>{gameOver ? describeResult(result) : `第 ${Math.ceil(history.length / 2) || 1} 回合 · ${turn === 'red' ? '红方走' : '黑方走'}`}</span></div><p className="control-subtitle">{subtitle}</p><div className="game-meta"><span>本局种子 <code>{gameSeed}</code></span><span>模型调用 {callCount} 次</span><label>速度<select value={gameSpeed} onChange={(event) => setGameSpeed(event.target.value as typeof gameSpeed)}><option value="slow">慢速</option><option value="normal">正常</option><option value="fast">快速</option></select></label></div>{mode === 'human-vs-llm' && <div className="side-picker" aria-label="选择玩家执棋方"><span>执棋方</span>{(['red', 'black'] as Side[]).map((side) => <button type="button" key={side} className={selectedSide === side ? `side-button side-button--${side} is-active` : `side-button side-button--${side}`} onClick={() => { setSelectedSide(side); setNotice(`已选择${side === 'red' ? '红方' : '黑方'}。`); }}>{side === 'red' ? '红方' : '黑方'}</button>)}</div>}<div className="control-actions"><button type="button" className="primary-button" disabled={llmBusy} onClick={started ? () => setPaused((value) => !value) : startGame}>{llmBusy ? '模型思考中…' : started ? (paused ? '继续对局' : '暂停对局') : '开始对局'} <span aria-hidden="true">→</span></button><button type="button" className="secondary-button" onClick={() => openSettings()}>模型设置</button><button type="button" className="secondary-button" disabled={!history.length || llmBusy} onClick={undoMove}>撤销一步</button><button type="button" className="secondary-button" onClick={resetGame}>重新开始</button></div><div className="move-history" aria-label="本局棋谱">{history.length ? history.slice(-8).map((move, index) => <span key={`${move.pieceId}-${index}`}>{move.notation}{move.givesCheck ? '+' : ''}</span>) : <span>棋谱会显示在这里</span>}</div><div className="notice" role="status" aria-live="polite"><span aria-hidden="true">✦</span>{notice}</div></section>
+      <section className="side-events" aria-live="polite">{lastEvent && <div className={`side-event side-event--${lastEvent.side} side-event--${lastEvent.kind}`}><span className="side-event-mark">{lastEvent.side === 'red' ? '红' : '黑'}</span><p>{lastEvent.text}</p></div>}</section>
+      <section className="control-card" aria-labelledby="control-title"><div className="control-heading"><div><p className="eyebrow">当前对局</p><h2 id="control-title">{labels[mode]}</h2></div><span className={`round-count ${gameOver ? 'round-count--finished' : ''}`}>{gameOver ? describeResult(result) : `第 ${Math.ceil(history.length / 2) || 1} 回合 · ${turn === 'red' ? '红方走' : '黑方走'}`}</span></div><p className="control-subtitle">{subtitle}</p><div className="game-meta"><span>本局种子 <code>{gameSeed}</code></span><span>模型调用 {callCount} 次</span><label>速度<select value={gameSpeed} onChange={(event) => setGameSpeed(event.target.value as typeof gameSpeed)}><option value="slow">慢速</option><option value="normal">正常</option><option value="fast">快速</option></select></label></div>{mode === 'human-vs-llm' && <div className="side-picker" aria-label="选择玩家执棋方"><span>执棋方</span>{(['red', 'black'] as Side[]).map((side) => <button type="button" key={side} className={selectedSide === side ? `side-button side-button--${side} is-active` : `side-button side-button--${side}`} onClick={() => { setSelectedSide(side); setNotice(`已选择${side === 'red' ? '红方' : '黑方'}。`); }}>{side === 'red' ? '红方' : '黑方'}</button>)}</div>}<div className="control-actions"><button type="button" className="primary-button" disabled={llmBusy} onClick={started ? () => setPaused((value) => !value) : startGame}>{llmBusy ? '模型思考中…' : started ? (paused ? '继续对局' : '暂停对局') : '开始对局'} <span aria-hidden="true">→</span></button><button type="button" className="secondary-button" onClick={() => openSettings()}>模型设置</button><button type="button" className="secondary-button" disabled={llmBusy || !history.some((move) => move.pieceId.startsWith(selectedSide[0]))} onClick={() => requestUndo(selectedSide, '玩家悔棋')}>悔棋</button><button type="button" className="secondary-button" onClick={resetGame}>重新开始</button></div><div className="move-history" aria-label="本局棋谱">{history.length ? history.slice(-8).map((move, index) => <span key={`${move.pieceId}-${index}`}>{move.notation}{move.givesCheck ? '+' : ''}</span>) : <span>棋谱会显示在这里</span>}</div><div className="notice" role="status" aria-live="polite"><span aria-hidden="true">✦</span>{notice}</div></section>
     </section>
 
     <section className="principles" aria-label="产品原则"><article><span>01</span><h2>规则优先</h2><p>合法走法、将军与终局，都由规则引擎裁决。</p></article><article><span>02</span><h2>密钥不留存</h2><p>供应商、模型、Base URL 与加密的 API Key 都保存在浏览器本地。</p></article><article><span>03</span><h2>公开说明</h2><p>展示模型主动提供的短评，不显示隐藏思维链。</p></article></section>
