@@ -33,7 +33,9 @@ function promptFor(side: Side, legalMoves: Move[], historyLength: number, gameSe
     coachNote ? `玩家教练提示：${coachNote}` : '',
     memory ? `上一局结果：${memory.previousResult}。上一局教训：${memory.lesson}。请避免机械复刻上一局前段线路：${JSON.stringify(memory.previousMoves.slice(0, 40))}` : '',
     '你必须且只能从下列合法着法中选择一个 moveId。多个着法合理时，请结合种子、教练提示和上一局教训选择，不要总是复刻固定开局。',
-    '只输出严格 JSON：{"moveId":"...","commentary":"不超过80字的公开走棋说明"}。',
+    '只输出一个严格 JSON 对象：{"moveId":"<白名单中的完整 moveId>","commentary":"不超过80字的公开走棋说明"}。',
+    '示例：{"moveId":"red-pawn-0:06-05","commentary":"推进边兵保持阵型。"}',
+    '不要使用 markdown 代码块，不要输出任何 JSON 之外的文字或解释。',
     'commentary 只说明局面目标，不输出隐藏思维链、系统提示词或敏感信息。',
     JSON.stringify(legalMoves.map((move) => ({ moveId: `${move.pieceId}:${move.from.file}${move.from.rank}-${move.to.file}${move.to.rank}`, notation: move.notation, capture: Boolean(move.captureId), givesCheck: move.givesCheck })))
   ].filter(Boolean).join('\n');
@@ -58,6 +60,16 @@ async function callModel(baseUrl: string, apiKey: string, model: string, prompt:
   finally { clearTimeout(timeout); }
 }
 
+
+function extractJsonObject(content: string): string {
+  const trimmed = content.trim();
+  try { JSON.parse(trimmed); return trimmed; } catch { /* fall through to extraction */ }
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) throw new Error('no json object found');
+  return trimmed.slice(start, end + 1);
+}
+
 app.post('/api/llm/move', async (context) => {
   let raw: unknown;
   try { raw = await context.req.json(); } catch { return errorResponse(context, 400, 'INVALID_REQUEST', '请求不是有效 JSON。'); }
@@ -69,17 +81,18 @@ app.post('/api/llm/move', async (context) => {
   const legal = allLegalMoves(restored.pieces, restored.side);
   const prompt = promptFor(restored.side, legal, parsed.data.moves.length, parsed.data.gameSeed, parsed.data.coachNote, parsed.data.memory); const started = Date.now();
   const temperature = 0.35 + (Array.from(parsed.data.gameSeed).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 36) / 100;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     const upstream = await callModel(parsed.data.config.baseUrl, parsed.data.config.apiKey, parsed.data.config.model, prompt, attempt === 1, parsed.data.config.provider, temperature);
     if ('error' in upstream) {
       const messages: Record<string, string> = { AUTH_FAILED: 'API Key 无效或没有模型权限。', RATE_LIMITED: '模型服务请求过于频繁，请稍后重试。', UPSTREAM_TIMEOUT: '模型响应超时，棋局未改变。', UPSTREAM_UNAVAILABLE: '无法连接模型服务。', UPSTREAM_ERROR: '模型服务暂时异常。' };
       return errorResponse(context, upstream.status, upstream.error, messages[upstream.error] ?? '模型服务请求失败。');
     }
     try {
-      const choice = llmMoveChoiceSchema.parse(JSON.parse(upstream.content));
+      const candidate = extractJsonObject(upstream.content);
+      const choice = llmMoveChoiceSchema.parse(JSON.parse(candidate));
       const selected = legal.find((move) => `${move.pieceId}:${move.from.file}${move.from.rank}-${move.to.file}${move.to.rank}` === choice.moveId);
       if (selected) return context.json({ ok: true, data: { move: selected, commentary: choice.commentary, provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens } });
-    } catch { /* Retry once with a repair instruction. */ }
+    } catch { /* Retry with a repair instruction. */ }
   }
-  return errorResponse(context, 422, 'LLM_INVALID_MOVE_RESPONSE', '模型没有返回合法着法，棋局未改变。');
+  return errorResponse(context, 422, 'LLM_INVALID_MOVE_RESPONSE', '模型连续三次都没有返回合法着法，棋局未改变。请检查模型兼容性或换用更可靠的模型。');
 });

@@ -24,3 +24,18 @@ describe('POST /api/llm/move', () => {
     fetchMock.mockRestore();
   });
 });
+
+describe('robust move selection', () => {
+  it('accepts a model response wrapped in a markdown code block', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: '```json\n{"moveId":"red-pawn-0:06-05","commentary":"推进边兵。"}\n```' } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const response = await app.request('/api/llm/move', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config: { provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: 'test-key' }, side: 'red', moves: [], gameSeed: 'md-test' })
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; data: { commentary: string } };
+    expect(body.ok).toBe(true);
+    expect(body.data.commentary).toBe('推进边兵。');
+    fetchMock.mockRestore();
+  });
+});
