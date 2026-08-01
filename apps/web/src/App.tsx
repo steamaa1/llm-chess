@@ -100,7 +100,7 @@ export function App() {
   const [profiles, setProfiles] = useState<ModelProfiles>(readProfiles);
   const [sessionKeys, setSessionKeys] = useState<SessionKeys>({ red: '', black: '' });
 
-  useEffect(() => { void (async () => { try { const keys = await readApiKeys(); setSessionKeys(keys); } catch {} })(); }, []);
+  useEffect(() => { void (async () => { try { const keys = await readApiKeys(); setSessionKeys(keys); } catch { /* crypto or storage unavailable; keys remain session-only */ } })(); }, []);
   const [draft, setDraft] = useState<DraftConfig>(() => ({ ...readProfiles().red, apiKey: '' }));
   const [formError, setFormError] = useState('');
   const [view, setView] = useState<View>('game');
