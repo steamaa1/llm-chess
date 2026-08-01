@@ -131,7 +131,7 @@ app.post('/api/llm/move', async (context) => {
     if (picked && 'undo' in picked && picked.undo) {
       return context.json({ ok: true, data: { undo: true, undoReason: picked.reason ?? '模型申请悔棋', provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens } });
     }
-    if (picked) {
+    if (picked && 'move' in picked) {
       const commentary = picked.commentary?.trim() || '模型已选择合法着法。';
       return context.json({ ok: true, data: { move: picked.move, commentary, provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens } });
     }
