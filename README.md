@@ -28,8 +28,8 @@
 部署成功后，通过同一个 Worker 地址访问：
 
 ```text
-https://llm-chess.jiacheng358.workers.dev/
-https://llm-chess.jiacheng358.workers.dev/api/health
+https://xxxx.workers.dev/
+https://xxxx.workers.dev/api/health
 ```
 
 ## 本地开发命令
