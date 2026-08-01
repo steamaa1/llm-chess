@@ -56,7 +56,7 @@ test('saves a provider profile and encrypts the API key in the browser', async (
   const stored = await page.evaluate(() => window.localStorage.getItem('llm-chess:model-profiles:v1'));
   expect(stored).toContain('saved-test-model');
   expect(stored).not.toContain('sk-test-key-123');
-  const encrypted = await page.evaluate(() => window.localStorage.getItem('llm-chess:api-key:red:v1'));
+  const encrypted = await page.evaluate(() => window.localStorage.getItem('llm-chess:api-keys:v1:red'));
   expect(encrypted).toBeTruthy();
   expect(encrypted).not.toContain('sk-test-key-123');
   await page.reload();
