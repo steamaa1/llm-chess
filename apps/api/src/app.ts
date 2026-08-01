@@ -44,7 +44,7 @@ function promptFor(side: Side, legalMoves: Move[], historyLength: number, gameSe
     JSON.stringify(legalMoves.map((move, index) => ({ index, moveId: `${move.pieceId}:${move.from.file}${move.from.rank}-${move.to.file}${move.to.rank}`, notation: move.notation, capture: Boolean(move.captureId), givesCheck: move.givesCheck })))
   ].filter(Boolean).join('\n');
 }
-type UpstreamResult = { content: string; promptTokens: number; completionTokens: number } | { error: string; status: number };
+type UpstreamResult = { content: string; promptTokens: number; completionTokens: number } | { error: string; status: number; detail?: string };
 
 async function callModel(baseUrl: string, apiKey: string, model: string, prompt: string, repair: boolean, provider: string, temperature: number): Promise<UpstreamResult> {
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 25_000);
@@ -57,7 +57,15 @@ async function callModel(baseUrl: string, apiKey: string, model: string, prompt:
         { role: 'user', content: repair ? `${prompt}\n上一次响应无效。请修正并只返回 JSON。` : prompt }
       ] })
     });
-    if (!response.ok) return { error: response.status === 401 || response.status === 403 ? 'AUTH_FAILED' : response.status === 429 ? 'RATE_LIMITED' : 'UPSTREAM_ERROR', status: response.status } as const;
+    if (!response.ok) {
+      const code = response.status === 401 || response.status === 403 ? 'AUTH_FAILED' : response.status === 429 ? 'RATE_LIMITED' : 'UPSTREAM_ERROR';
+      let detail = '';
+      try {
+        const body = await response.json() as { error?: { message?: string }; message?: string };
+        detail = (body.error?.message ?? body.message ?? '').trim();
+      } catch { /* upstream body is not JSON */ }
+      return { error: code, status: response.status, detail };
+    }
     const json = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } };
     return { content: json.choices?.[0]?.message?.content ?? '', promptTokens: json.usage?.prompt_tokens ?? 0, completionTokens: json.usage?.completion_tokens ?? 0 };
   } catch (error) { return { error: error instanceof DOMException && error.name === 'AbortError' ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_UNAVAILABLE', status: 502 } as const; }
@@ -125,7 +133,8 @@ app.post('/api/llm/move', async (context) => {
     const upstream = await callModel(parsed.data.config.baseUrl, parsed.data.config.apiKey, parsed.data.config.model, prompt, attempt === 1, parsed.data.config.provider, temperature);
     if ('error' in upstream) {
       const messages: Record<string, string> = { AUTH_FAILED: 'API Key 无效或没有模型权限。', RATE_LIMITED: '模型服务请求过于频繁，请稍后重试。', UPSTREAM_TIMEOUT: '模型响应超时，棋局未改变。', UPSTREAM_UNAVAILABLE: '无法连接模型服务。', UPSTREAM_ERROR: '模型服务暂时异常。' };
-      return errorResponse(context, upstream.status, upstream.error, messages[upstream.error] ?? '模型服务请求失败。');
+      const detailText = upstream.detail ? `（${upstream.detail.slice(0, 200)}）` : '';
+      return errorResponse(context, upstream.status, upstream.error, `${messages[upstream.error] ?? '模型服务请求失败。'}${detailText}`);
     }
     const picked = pickLegalMove(legal, upstream.content);
     if (picked && 'undo' in picked && picked.undo) {

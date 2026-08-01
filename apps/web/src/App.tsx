@@ -40,18 +40,24 @@ function base64url(buffer: ArrayBuffer) { return btoa(String.fromCharCode(...new
 function parseBase64url(value: string) { return Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0)).buffer; }
 
 async function readApiKeys(): Promise<SessionKeys> {
-  try {
-    const raw = window.localStorage.getItem(ENCRYPTED_API_KEY);
-    if (!raw) return { red: '', black: '' };
+  const keys: SessionKeys = { red: '', black: '' };
+  async function decryptRaw(raw: string): Promise<Partial<Record<Side, string>>> {
     const parsed = JSON.parse(raw) as { iv: string; data: string; key: string };
     if (!parsed.iv || !parsed.data || !parsed.key) throw new Error('format');
     const iv = new Uint8Array(parseBase64url(parsed.iv));
     const encrypted = new Uint8Array(parseBase64url(parsed.data));
     const secret = await crypto.subtle.importKey('raw', parseBase64url(parsed.key), { name: 'AES-GCM' }, false, ['decrypt']);
     const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, secret, encrypted);
-    const json = JSON.parse(new TextDecoder().decode(decrypted)) as Partial<Record<Side, string>>;
-    return { red: typeof json.red === 'string' ? json.red : '', black: typeof json.black === 'string' ? json.black : '' };
-  } catch { return { red: '', black: '' }; }
+    return JSON.parse(new TextDecoder().decode(decrypted)) as Partial<Record<Side, string>>;
+  }
+  try { const legacy = window.localStorage.getItem(ENCRYPTED_API_KEY); if (legacy) { const json = await decryptRaw(legacy); if (typeof json.red === 'string') keys.red = json.red; if (typeof json.black === 'string') keys.black = json.black; } } catch { /* ignore legacy */ }
+  for (const side of ['red', 'black'] as Side[]) {
+    try {
+      const raw = window.localStorage.getItem(`${ENCRYPTED_API_KEY}:${side}`);
+      if (raw) { const json = await decryptRaw(raw); if (typeof json[side] === 'string') keys[side] = json[side]; }
+    } catch { /* per-side storage missing or corrupt */ }
+  }
+  return keys;
 }
 
 function readProfiles(): ModelProfiles {
@@ -100,7 +106,7 @@ export function App() {
   const [profiles, setProfiles] = useState<ModelProfiles>(readProfiles);
   const [sessionKeys, setSessionKeys] = useState<SessionKeys>({ red: '', black: '' });
 
-  useEffect(() => { void (async () => { try { const keys = await readApiKeys(); setSessionKeys(keys); } catch { /* crypto or storage unavailable; keys remain session-only */ } })(); }, []);
+  useEffect(() => { void (async () => { try { const keys = await readApiKeys(); setSessionKeys((current) => ({ red: current.red || keys.red, black: current.black || keys.black })); } catch { /* crypto or storage unavailable; keys remain session-only */ } })(); }, []);
   const [draft, setDraft] = useState<DraftConfig>(() => ({ ...readProfiles().red, apiKey: '' }));
   const [formError, setFormError] = useState('');
   const [view, setView] = useState<View>('game');
@@ -288,7 +294,7 @@ export function App() {
         const rawKey = crypto.getRandomValues(new Uint8Array(32));
         const secret = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, false, ['encrypt']);
         const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, secret, new TextEncoder().encode(JSON.stringify({ [editingSide]: sideKey })));
-        window.localStorage.setItem(ENCRYPTED_API_KEY, JSON.stringify({ iv: base64url(iv.buffer), data: base64url(encrypted), key: base64url(rawKey.buffer) }));
+        window.localStorage.setItem(`${ENCRYPTED_API_KEY}:${editingSide}`, JSON.stringify({ iv: base64url(iv.buffer), data: base64url(encrypted), key: base64url(rawKey.buffer) }));
       } catch { /* encryption unavailable; keep session-only */ }
     }
     setIsSettingsOpen(false);
@@ -361,7 +367,7 @@ export function App() {
   function goHome() { resetGame(); setScreen('home'); }
 
   return <main className="app-shell">
-    <header className="topbar"><a className="brand" href="#main-content" aria-label="LLM 象棋主页"><span className="brand-seal" aria-hidden="true">棋</span><span><strong>LLM 象棋</strong><small>CHINESE CHESS LAB</small></span></a><div className="topbar-actions">{screen === 'game' && <nav className="view-switch" aria-label="页面切换"><button className={view === 'game' ? 'is-active' : ''} type="button" onClick={() => setView('game')}>棋局</button><button className={view === 'analysis' ? 'is-active' : ''} type="button" onClick={() => setView('analysis')}>对局分析</button></nav>}<span className={`service-pill service-pill--${status}`} aria-live="polite"><i aria-hidden="true" />{status === 'ready' ? '服务已就绪' : status === 'loading' ? '检查服务中' : '服务暂不可用'}</span><button className="icon-button" type="button" aria-label="打开模型配置" onClick={() => openSettings()}>⚙</button></div></header>
+    <header className="topbar"><a className="brand" href="#main-content" aria-label="LLM 象棋主页"><span className="brand-seal" aria-hidden="true">棋</span><span><strong>LLM 象棋</strong><small>CHINESE CHESS LAB</small></span></a><div className="topbar-actions">{screen === 'game' && <button className="home-nav" type="button" onClick={goHome}>← 首页</button>}{screen === 'game' && <nav className="view-switch" aria-label="页面切换"><button className={view === 'game' ? 'is-active' : ''} type="button" onClick={() => setView('game')}>棋局</button><button className={view === 'analysis' ? 'is-active' : ''} type="button" onClick={() => setView('analysis')}>对局分析</button></nav>}<span className={`service-pill service-pill--${status}`} aria-live="polite"><i aria-hidden="true" />{status === 'ready' ? '服务已就绪' : status === 'loading' ? '检查服务中' : '服务暂不可用'}</span><button className="icon-button" type="button" aria-label="打开模型配置" onClick={() => openSettings()}>⚙</button></div></header>
 
     {screen === 'home' ? (
       <section className="hero hero--home" aria-labelledby="page-title">
@@ -400,7 +406,7 @@ export function App() {
       <aside className="player-card player-card--red"><div className="player-mark">红</div><div><p>红方棋手</p><h2>{mode === 'human-vs-llm' && selectedSide === 'red' ? '你' : profileName(profiles.red)}</h2><button className="profile-link" type="button" onClick={() => openSettings('red')}>配置红方模型</button></div><span className="turn-badge turn-badge--current">先手</span></aside>
       <section className="error-spot" aria-live="polite">{appError && <div className="error-banner" role="alert"><span className="error-code">{appError.code}</span><span className="error-message">{appError.message}</span><button type="button" onClick={() => { setAppError(null); setPaused(false); }}>关闭并重试</button></div>}</section>
       <section className="side-events" aria-live="polite">{lastEvent && <div className={`side-event side-event--${lastEvent.side} side-event--${lastEvent.kind}`}><span className="side-event-mark">{lastEvent.side === 'red' ? '红' : '黑'}</span><p>{lastEvent.text}</p></div>}</section>
-      <section className="control-card" aria-labelledby="control-title"><div className="control-heading"><div><p className="eyebrow">当前对局</p><h2 id="control-title">{labels[mode]}</h2></div><span className={`round-count ${gameOver ? 'round-count--finished' : ''}`}>{gameOver ? describeResult(result) : `第 ${Math.ceil(history.length / 2) || 1} 回合 · ${turn === 'red' ? '红方走' : '黑方走'}`}</span></div><p className="control-subtitle">{subtitle}</p><div className="game-meta"><span>本局种子 <code>{gameSeed}</code></span><span>模型调用 {callCount} 次</span><label>速度<select value={gameSpeed} onChange={(event) => setGameSpeed(event.target.value as typeof gameSpeed)}><option value="slow">慢速</option><option value="normal">正常</option><option value="fast">快速</option></select></label></div>{mode === 'human-vs-llm' && <div className="side-picker" aria-label="选择玩家执棋方"><span>执棋方</span>{(['red', 'black'] as Side[]).map((side) => <button type="button" key={side} className={selectedSide === side ? `side-button side-button--${side} is-active` : `side-button side-button--${side}`} onClick={() => { setSelectedSide(side); setNotice(`已选择${side === 'red' ? '红方' : '黑方'}。`); }}>{side === 'red' ? '红方' : '黑方'}</button>)}</div>}<div className="control-actions"><button type="button" className="primary-button" disabled={llmBusy} onClick={started ? () => setPaused((value) => !value) : startGame}>{llmBusy ? '模型思考中…' : started ? (paused ? '继续对局' : '暂停对局') : '开始对局'} <span aria-hidden="true">→</span></button><button type="button" className="secondary-button" onClick={() => openSettings()}>模型设置</button><button type="button" className="secondary-button" disabled={llmBusy || !history.some((move) => move.pieceId.startsWith(selectedSide === 'red' ? 'r' : 'b'))} onClick={() => requestUndo(selectedSide, '玩家悔棋')}>悔棋</button><button type="button" className="secondary-button" onClick={resetGame}>重新开始</button></div><div className="move-history" aria-label="本局棋谱">{history.length ? history.slice(-8).map((move, index) => <span key={`${move.pieceId}-${index}`}>{move.notation}{move.givesCheck ? '+' : ''}</span>) : <span>棋谱会显示在这里</span>}</div><div className="notice" role="status" aria-live="polite"><span aria-hidden="true">✦</span>{notice}</div></section>
+      <section className="control-card" aria-labelledby="control-title"><div className="control-heading"><div><p className="eyebrow">当前对局</p><h2 id="control-title">{labels[mode]}</h2></div><span className={`round-count ${gameOver ? 'round-count--finished' : ''}`}>{gameOver ? describeResult(result) : `第 ${Math.ceil(history.length / 2) || 1} 回合 · ${turn === 'red' ? '红方走' : '黑方走'}`}</span></div><p className="control-subtitle">{subtitle}</p><div className="game-meta"><span>本局种子 <code>{gameSeed}</code></span><span>模型调用 {callCount} 次</span><label>速度<select value={gameSpeed} onChange={(event) => setGameSpeed(event.target.value as typeof gameSpeed)}><option value="slow">慢速</option><option value="normal">正常</option><option value="fast">快速</option></select></label></div>{mode === 'human-vs-llm' && <div className="side-picker" aria-label="选择玩家执棋方"><span>执棋方</span>{(['red', 'black'] as Side[]).map((side) => <button type="button" key={side} className={selectedSide === side ? `side-button side-button--${side} is-active` : `side-button side-button--${side}`} onClick={() => { setSelectedSide(side); setNotice(`已选择${side === 'red' ? '红方' : '黑方'}。`); }}>{side === 'red' ? '红方' : '黑方'}</button>)}</div>}<div className="control-actions"><button type="button" className="primary-button" disabled={llmBusy} onClick={started ? () => setPaused((value) => !value) : startGame}>{llmBusy ? '模型思考中…' : started ? (paused ? '继续对局' : '暂停对局') : '开始对局'} <span aria-hidden="true">→</span></button><button type="button" className="secondary-button" onClick={() => openSettings()}>模型设置</button><button type="button" className="secondary-button" disabled={llmBusy || !history.some((move) => move.pieceId.startsWith(selectedSide === 'red' ? 'r' : 'b'))} onClick={() => requestUndo(selectedSide, '玩家悔棋')}>悔棋</button><button type="button" className="secondary-button" onClick={resetGame}>重新开始</button><button type="button" className="secondary-button" onClick={goHome}>回到首页</button></div><div className="move-history" aria-label="本局棋谱">{history.length ? history.slice(-8).map((move, index) => <span key={`${move.pieceId}-${index}`}>{move.notation}{move.givesCheck ? '+' : ''}</span>) : <span>棋谱会显示在这里</span>}</div><div className="notice" role="status" aria-live="polite"><span aria-hidden="true">✦</span>{notice}</div></section>
     </section>
 
     <section className="principles" aria-label="产品原则"><article><span>01</span><h2>规则优先</h2><p>合法走法、将军与终局，都由规则引擎裁决。</p></article><article><span>02</span><h2>密钥不留存</h2><p>供应商、模型、Base URL 与加密的 API Key 都保存在浏览器本地。</p></article><article><span>03</span><h2>公开说明</h2><p>展示模型主动提供的短评，不显示隐藏思维链。</p></article></section>
