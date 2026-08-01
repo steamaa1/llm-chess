@@ -37,21 +37,24 @@ test('opens the public analysis page without claiming hidden chain of thought', 
   await expect(page.getByText('还没有保存的棋谱。')).toBeVisible();
 });
 
-test('saves a provider profile without persisting the API key', async ({ page }) => {
+test('saves a provider profile and encrypts the API key in the browser', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '打开模型配置' }).click();
   await page.getByRole('tab', { name: '红方模型' }).click();
   await page.getByLabel('模型名称').fill('saved-test-model');
   await page.getByLabel('Base URL').fill('https://api.example.test/v1');
-  await page.getByLabel(/API Key/).fill('must-not-be-persisted');
+  await page.getByLabel(/API Key/).fill('sk-test-key-123');
   await page.getByRole('button', { name: '保存 红方供应商' }).click();
   await expect(page.getByText('红方供应商已保存为')).toBeVisible();
   const stored = await page.evaluate(() => window.localStorage.getItem('llm-chess:model-profiles:v1'));
   expect(stored).toContain('saved-test-model');
-  expect(stored).not.toContain('must-not-be-persisted');
+  expect(stored).not.toContain('sk-test-key-123');
+  const encrypted = await page.evaluate(() => window.localStorage.getItem('llm-chess:api-keys:v1'));
+  expect(encrypted).toBeTruthy();
+  expect(encrypted).not.toContain('sk-test-key-123');
   await page.reload();
   await page.getByRole('button', { name: '打开模型配置' }).click();
   await page.getByRole('tab', { name: '红方模型' }).click();
   await expect(page.getByLabel('模型名称')).toHaveValue('saved-test-model');
-  await expect(page.getByLabel(/API Key/)).toHaveValue('');
+  await expect(page.getByLabel(/API Key/)).toHaveValue('sk-test-key-123');
 });

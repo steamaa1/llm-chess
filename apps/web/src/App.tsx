@@ -17,6 +17,7 @@ type StoredGame = { schemaVersion: 1; id?: string; name?: string; savedAt: strin
 const STORAGE_KEY = 'llm-chess:model-profiles:v1';
 const GAMES_KEY = 'llm-chess:games:v1';
 const MEMORY_KEY = 'llm-chess:lessons:v1';
+const ENCRYPTED_API_KEY = 'llm-chess:api-keys:v1';
 const DEFAULT_PROFILE: SavedModelProfile = { provider: 'deepseek', model: 'deepseek-chat', baseUrl: 'https://api.deepseek.com/v1' };
 const PROVIDERS: Record<ProviderId, { label: string; baseUrl: string; model: string }> = {
   custom: { label: 'OpenAI 兼容接口', baseUrl: '', model: '' },
@@ -35,20 +36,25 @@ function isProfile(value: unknown): value is SavedModelProfile {
   return typeof candidate.provider === 'string' && candidate.provider in PROVIDERS && typeof candidate.model === 'string' && typeof candidate.baseUrl === 'string';
 }
 
-function readApiKeys(): SessionKeys {
+function base64url(buffer: ArrayBuffer) { return btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+function parseBase64url(value: string) { return Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0)).buffer; }
+
+async function readApiKeys(): Promise<SessionKeys> {
   try {
     const raw = window.localStorage.getItem(ENCRYPTED_API_KEY);
     if (!raw) return { red: '', black: '' };
-    const [ivB64, dataB64, keyB64] = JSON.parse(raw) as [string, string, string];
-    if (!ivB64 || !dataB64 || !keyB64) throw new Error('format');
-    const iv = new Uint8Array(parseBase64url(ivB64));
-    const encrypted = new Uint8Array(parseBase64url(dataB64));
-    const secret = await crypto.subtle.importKey('raw', parseBase64url(keyB64), { name: 'AES-GCM' }, false, ['decrypt']);
+    const parsed = JSON.parse(raw) as { iv: string; data: string; key: string };
+    if (!parsed.iv || !parsed.data || !parsed.key) throw new Error('format');
+    const iv = new Uint8Array(parseBase64url(parsed.iv));
+    const encrypted = new Uint8Array(parseBase64url(parsed.data));
+    const secret = await crypto.subtle.importKey('raw', parseBase64url(parsed.key), { name: 'AES-GCM' }, false, ['decrypt']);
     const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, secret, encrypted);
     const json = JSON.parse(new TextDecoder().decode(decrypted)) as Partial<Record<Side, string>>;
     return { red: typeof json.red === 'string' ? json.red : '', black: typeof json.black === 'string' ? json.black : '' };
   } catch { return { red: '', black: '' }; }
 }
+
+function readProfiles(): ModelProfiles {
   try {
     const value: unknown = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '');
     if (value && typeof value === 'object') {
@@ -237,7 +243,7 @@ export function App() {
     setFormError('');
   }
 
-  function saveProfile() {
+  async function saveProfile() {
     const baseUrl = draft.baseUrl.trim().replace(/\/$/, '');
     const model = draft.model.trim();
     if (!model) { setFormError('请填写模型名称。'); return; }
@@ -249,9 +255,19 @@ export function App() {
     const nextProfiles = { ...profiles, [editingSide]: nextProfile };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextProfiles));
     setProfiles(nextProfiles);
-    setSessionKeys((current) => ({ ...current, [editingSide]: draft.apiKey.trim() }));
+    const sideKey = draft.apiKey.trim();
+    setSessionKeys((current) => ({ ...current, [editingSide]: sideKey }));
+    if (sideKey) {
+      try {
+        const iv = crypto.getRandomValues(new Uint8Array(12));
+        const rawKey = crypto.getRandomValues(new Uint8Array(32));
+        const secret = await crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, false, ['encrypt']);
+        const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, secret, new TextEncoder().encode(JSON.stringify({ [editingSide]: sideKey })));
+        window.localStorage.setItem(ENCRYPTED_API_KEY, JSON.stringify({ iv: base64url(iv.buffer), data: base64url(encrypted), key: base64url(rawKey.buffer) }));
+      } catch { /* encryption unavailable; keep session-only */ }
+    }
     setIsSettingsOpen(false);
-    setNotice(`${editingSide === 'red' ? '红方' : '黑方'}供应商已保存为「${PROVIDERS[draft.provider].label} / ${model}」。${draft.apiKey.trim() ? 'API Key 仅保存在本次会话内。' : '尚未填写 API Key。'}`);
+    setNotice(`${editingSide === 'red' ? '红方' : '黑方'}供应商已保存为「${PROVIDERS[draft.provider].label} / ${model}」。${sideKey ? 'API Key 已加密保存到浏览器。' : '尚未填写 API Key。'}`);
   }
 
   function switchEditingSide(side: Side) {
@@ -334,6 +350,6 @@ export function App() {
     <section className="principles" aria-label="产品原则"><article><span>01</span><h2>规则优先</h2><p>合法走法、将军与终局，都由规则引擎裁决。</p></article><article><span>02</span><h2>密钥不留存</h2><p>仅保存供应商、模型和 Base URL；Key 只在当前会话内。</p></article><article><span>03</span><h2>公开说明</h2><p>展示模型主动提供的短评，不显示隐藏思维链。</p></article></section>
     </> : <section className="analysis-page"><div className="analysis-heading"><div><p className="eyebrow">AUDITABLE GAME TRACE</p><h1>对局分析</h1><p>查看公开走棋说明、规则校验和错误事件。这里不请求或展示模型隐藏思维链。</p></div><div className="analysis-actions"><button className="secondary-button" type="button" onClick={saveGame}>保存棋谱</button><button className="secondary-button" type="button" onClick={() => download(JSON.stringify({ schemaVersion: 1, result, moves: history, analysis }, null, 2), 'llm-chess-game.json', 'application/json')}>导出 JSON</button><button className="secondary-button" type="button" onClick={() => download(history.map((move, index) => `${index + 1}. ${move.notation}`).join('\n'), 'llm-chess-game.txt', 'text/plain')}>导出文本</button><label className="file-button">导入棋谱<input type="file" accept="application/json,.json" onChange={importGame} /></label></div></div><section className="saved-games"><header><h2>本地棋谱</h2><span>最多保存 30 局</span></header>{savedGames.length ? savedGames.map((record) => <article key={record.id ?? record.savedAt}><div><strong>{record.name ?? record.savedAt}</strong><p>{record.result} · {record.moves.length} 个半回合</p></div><div><button className="secondary-button" type="button" onClick={() => replayGame(record)}>回放</button><button className="secondary-button" type="button" onClick={() => deleteGame(record)}>删除</button></div></article>) : <p className="saved-games-empty">还没有保存的棋谱。</p>}</section><div className="analysis-timeline">{analysis.length ? analysis.map((event) => <article className={`analysis-event analysis-event--${event.status}`} key={event.id}><span className="analysis-dot" /><div><header><strong>{event.side === 'red' ? '红方' : '黑方'}{event.move ? ` · ${event.move}` : ''}</strong><time>{new Date(event.at).toLocaleTimeString('zh-CN')}</time></header>{event.commentary && <blockquote>{event.commentary}</blockquote>}<p>{event.detail}</p></div></article>) : <div className="analysis-empty"><span>谱</span><h2>尚无分析记录</h2><p>开始对局后，模型请求、公开说明和错误会按时间显示在这里。</p></div>}</div></section>}
 
-    {isSettingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsSettingsOpen(false)}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="关闭模型配置" onClick={() => setIsSettingsOpen(false)}>×</button><p className="eyebrow">连接配置</p><h2 id="settings-title">保存模型供应商</h2><p>服务商、模型名、Base URL 会安全保存到此浏览器；API Key 会加密存储在浏览器本地以便下次使用。</p><div className="config-side-tabs" role="tablist" aria-label="选择要配置的一方">{(['red', 'black'] as Side[]).map((side) => <button type="button" role="tab" aria-selected={editingSide === side} className={editingSide === side ? `is-active side-${side}` : `side-${side}`} key={side} onClick={() => switchEditingSide(side)}>{side === 'red' ? '红方模型' : '黑方模型'}</button>)}</div><div className="setting-grid"><label>服务商<select value={draft.provider} onChange={(event) => selectProvider(event.target.value as ProviderId)}>{(Object.keys(PROVIDERS) as ProviderId[]).map((provider) => <option value={provider} key={provider}>{PROVIDERS[provider].label}</option>)}</select></label><label>模型名称<input value={draft.model} onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))} placeholder="例如：deepseek-chat" autoComplete="off" /></label><label className="span-all">Base URL<input value={draft.baseUrl} onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" inputMode="url" autoComplete="off" /></label><label className="span-all">临时教练提示 <span className="field-hint">只影响本局，不会写入模型记忆库</span><textarea value={coachNotes[editingSide]} onChange={(event) => setCoachNotes((current) => ({ ...current, [editingSide]: event.target.value }))} placeholder="例如：优先控制中路，避免重复上一局的开局。" maxLength={300} /></label><label className="span-all">API Key <span className="field-hint">仅限当前会话，可留空后稍后填写</span><input type="password" value={draft.apiKey} onChange={(event) => setDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder="不会保存到浏览器" autoComplete="off" /></label></div>{formError && <p className="form-error" role="alert">{formError}</p>}<button type="button" className="primary-button" onClick={saveProfile}>保存 {editingSide === 'red' ? '红方' : '黑方'}供应商</button></section></div>}
+    {isSettingsOpen && <div className="modal-backdrop" role="presentation" onMouseDown={() => setIsSettingsOpen(false)}><section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="关闭模型配置" onClick={() => setIsSettingsOpen(false)}>×</button><p className="eyebrow">连接配置</p><h2 id="settings-title">保存模型供应商</h2><p>服务商、模型名、Base URL 会安全保存到此浏览器；API Key 会加密存储在浏览器本地以便下次使用。</p><div className="config-side-tabs" role="tablist" aria-label="选择要配置的一方">{(['red', 'black'] as Side[]).map((side) => <button type="button" role="tab" aria-selected={editingSide === side} className={editingSide === side ? `is-active side-${side}` : `side-${side}`} key={side} onClick={() => switchEditingSide(side)}>{side === 'red' ? '红方模型' : '黑方模型'}</button>)}</div><div className="setting-grid"><label>服务商<select value={draft.provider} onChange={(event) => selectProvider(event.target.value as ProviderId)}>{(Object.keys(PROVIDERS) as ProviderId[]).map((provider) => <option value={provider} key={provider}>{PROVIDERS[provider].label}</option>)}</select></label><label>模型名称<input value={draft.model} onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))} placeholder="例如：deepseek-chat" autoComplete="off" /></label><label className="span-all">Base URL<input value={draft.baseUrl} onChange={(event) => setDraft((current) => ({ ...current, baseUrl: event.target.value }))} placeholder="https://api.example.com/v1" inputMode="url" autoComplete="off" /></label><label className="span-all">临时教练提示 <span className="field-hint">只影响本局，不会写入模型记忆库</span><textarea value={coachNotes[editingSide]} onChange={(event) => setCoachNotes((current) => ({ ...current, [editingSide]: event.target.value }))} placeholder="例如：优先控制中路，避免重复上一局的开局。" maxLength={300} /></label><label className="span-all">API Key <span className="field-hint">加密保存到浏览器，刷新后仍可使用</span><input type="password" value={draft.apiKey} onChange={(event) => setDraft((current) => ({ ...current, apiKey: event.target.value }))} placeholder="sk-..." autoComplete="off" /></label></div>{formError && <p className="form-error" role="alert">{formError}</p>}<button type="button" className="primary-button" onClick={saveProfile}>保存 {editingSide === 'red' ? '红方' : '黑方'}供应商</button></section></div>}
   </main>;
 }
