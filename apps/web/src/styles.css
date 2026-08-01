@@ -19,3 +19,46 @@
 @media(max-width:700px){.side-event{padding:8px 10px}.side-event-mark{flex:none}.side-event p{font-size:.74rem}.board-status{gap:6px}.board-status-round,.board-status-event{padding:6px 9px;font-size:.7rem}.view-switch{position:fixed;z-index:12;right:14px;bottom:14px;box-shadow:0 10px 30px #3b251836}.analysis-page{width:calc(100% - 28px);padding-top:34px}.analysis-heading{align-items:start;flex-direction:column}.analysis-actions{justify-content:flex-start;gap:6px}.analysis-actions .secondary-button,.analysis-actions .file-button{min-height:38px;padding:0 10px;font-size:.72rem;flex:0 0 auto}.error-banner{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;padding:11px 12px}.error-banner .error-code{grid-column:1/-1;justify-self:start;max-width:100%;overflow-wrap:anywhere;font-size:.62rem;padding:3px 7px}.error-banner .error-message{grid-column:1;font-size:.78rem}.error-banner button{grid-column:2;align-self:end;margin:0;padding:0 10px;min-height:30px;font-size:.72rem}}
 .file-button{min-height:44px;display:inline-flex;align-items:center;padding:0 17px;border:1px solid #d8c8b2;border-radius:9px;color:#6f5e4e;background:#fffdf7;font-size:.85rem;font-weight:700;cursor:pointer}.file-button:hover{background:#fff}.file-button input{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 .game-meta{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 16px;color:#887460;font-size:.74rem}.game-meta span,.game-meta label{display:inline-flex;gap:5px;align-items:center;padding:5px 7px;border-radius:6px;background:#f1e8da}.game-meta code{color:#9a2d24;font-size:.7rem}.game-meta select{border:0;color:#6e5946;background:transparent;font-size:.74rem}.last-move-mark{position:absolute;z-index:1;width:12.5%;height:11.111%;transform:translate(-50%,-50%);pointer-events:none}.last-move-mark--from{border:3px solid #9b702aa6;background:#fff2a52e}.last-move-mark--to{border:3px solid #a52b2499;background:#e8664c3b}.piece{cursor:grab}.piece:active{cursor:grabbing}.setting-grid textarea{width:100%;min-height:76px;padding:10px;border:1px solid #d9c8b2;border-radius:8px;resize:vertical;color:#352b23;background:#fffdf7;font:inherit;font-size:.85rem}.saved-games{margin:0 0 26px;padding:18px;border:1px solid #dfd1bd;border-radius:14px;background:#fffaf0a8}.saved-games>header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}.saved-games h2{margin:0;font-family:"Noto Serif SC",serif;font-size:1.15rem}.saved-games header span,.saved-games-empty{color:#907e6b;font-size:.75rem}.saved-games article{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 0;border-top:1px solid #eadfce}.saved-games article strong{font-size:.82rem}.saved-games article p{margin:5px 0 0;color:#907e6b;font-size:.72rem}.saved-games article>div:last-child{display:flex;gap:7px}.saved-games .secondary-button{min-height:34px;padding:0 10px;font-size:.72rem}
+
+/* Keep touch-device notices as full-width, compact cards. This block stays last to
+   override the later desktop sidebar rules above. */
+@media (max-width:850px), (pointer:coarse) {
+  .error-spot,
+  .side-events {
+    grid-column:1 / -1;
+    width:100%;
+    margin:0;
+  }
+  .error-spot { grid-row:3; }
+  .side-events { grid-row:4; }
+  .control-card { grid-column:1 / -1; grid-row:5; }
+}
+
+@media (max-width:700px), (pointer:coarse) {
+  .error-banner {
+    display:grid;
+    grid-template-columns:minmax(0,1fr) auto;
+    gap:8px 10px;
+    padding:10px 12px;
+  }
+  .error-banner .error-code { display:none; }
+  .error-banner .error-message {
+    grid-column:1;
+    align-self:center;
+    min-width:0;
+    font-size:.78rem;
+    overflow-wrap:anywhere;
+  }
+  .error-banner button {
+    grid-column:2;
+    align-self:center;
+    min-height:32px;
+    white-space:nowrap;
+  }
+  .side-event {
+    display:flex;
+    flex-wrap:nowrap;
+    padding:8px 10px;
+  }
+  .side-event p { flex:1; min-width:0; font-size:.74rem; }
+}
