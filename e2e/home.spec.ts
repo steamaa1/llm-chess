@@ -1,18 +1,25 @@
 import { expect, test } from '@playwright/test';
 
+async function enterGame(page: import('@playwright/test').Page) {
+  await page.goto('/');
+  await page.getByRole('button', { name: /开始游戏/ }).click();
+  await page.keyboard.press('Escape');
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/health', (route) => route.abort());
 });
 
-test('shows the application headline and recoverable API failure state', async ({ page }) => {
+test('shows the home page with start and configure buttons', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: '让语言模型，下一盘真正的象棋。' })).toBeVisible();
   await expect(page.getByText('服务暂不可用', { exact: true })).toBeVisible();
-  await expect(page.getByText('红方先行，请选择一枚红方棋子。')).toBeVisible();
+  await expect(page.getByRole('button', { name: /开始游戏/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: '配置模型' })).toBeVisible();
 });
 
 test('shows strict legal landing points and moves a selected piece', async ({ page }) => {
-  await page.goto('/');
+  await enterGame(page);
   await page.getByRole('button', { name: '红方兵，一路第7行' }).click();
   await expect(page.getByRole('button', { name: '走到一路第6行' })).toBeVisible();
   await page.getByRole('button', { name: '走到一路第6行' }).click();
@@ -22,13 +29,13 @@ test('shows strict legal landing points and moves a selected piece', async ({ pa
 
 test('shows a recoverable error when starting without an API key', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: '开始对局' }).click();
+  await page.getByRole('button', { name: /开始游戏/ }).click();
   await expect(page.getByRole('alert')).toContainText('API_KEY_MISSING');
   await expect(page.getByRole('dialog', { name: '保存模型供应商' })).toBeVisible();
 });
 
 test('opens the public analysis page without claiming hidden chain of thought', async ({ page }) => {
-  await page.goto('/');
+  await enterGame(page);
   await page.getByRole('button', { name: '对局分析' }).click();
   await expect(page.getByRole('heading', { name: '对局分析' })).toBeVisible();
   await expect(page.getByText('这里不请求或展示模型隐藏思维链。')).toBeVisible();
@@ -60,7 +67,7 @@ test('saves a provider profile and encrypts the API key in the browser', async (
 });
 
 test('toggles legal targets when clicking the same piece again', async ({ page }) => {
-  await page.goto('/');
+  await enterGame(page);
   const pawn = page.getByRole('button', { name: '红方兵，一路第7行' });
   await pawn.click();
   await expect(page.getByRole('button', { name: '走到一路第6行' })).toBeVisible();
@@ -71,7 +78,7 @@ test('toggles legal targets when clicking the same piece again', async ({ page }
 });
 
 test('undoes to the player last move when 悔棋 is clicked', async ({ page }) => {
-  await page.goto('/');
+  await enterGame(page);
   await page.getByRole('button', { name: '红方兵，一路第7行' }).click();
   await page.getByRole('button', { name: '走到一路第6行' }).click();
   await expect(page.getByText('现在轮到黑方走棋。')).toBeVisible();
