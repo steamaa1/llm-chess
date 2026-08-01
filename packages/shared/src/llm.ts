@@ -22,7 +22,11 @@ export const llmMoveRequestSchema = z.object({
   coachNote: z.string().trim().max(300).optional(),
   memory: llmMemorySchema.optional()
 }).strict();
-export const llmMoveChoiceSchema = z.object({ moveId: z.string().min(1).max(160), commentary: z.string().trim().min(1).max(180) }).strict();
+export const llmMoveChoiceSchema = z.object({
+  moveId: z.string().trim().min(1).max(160).optional(),
+  index: z.number().int().min(0).max(200).optional(),
+  commentary: z.string().trim().max(180).optional()
+}).strict().refine((value) => value.moveId !== undefined || value.index !== undefined, '必须提供 moveId 或 index');
 export const llmMoveResponseSchema = z.object({
   ok: z.literal(true),
   data: z.object({

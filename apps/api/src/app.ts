@@ -32,12 +32,14 @@ function promptFor(side: Side, legalMoves: Move[], historyLength: number, gameSe
     `当前已经走了 ${historyLength} 个半回合。`,
     coachNote ? `玩家教练提示：${coachNote}` : '',
     memory ? `上一局结果：${memory.previousResult}。上一局教训：${memory.lesson}。请避免机械复刻上一局前段线路：${JSON.stringify(memory.previousMoves.slice(0, 40))}` : '',
-    '你必须且只能从下列合法着法中选择一个 moveId。多个着法合理时，请结合种子、教练提示和上一局教训选择，不要总是复刻固定开局。',
-    '只输出一个严格 JSON 对象：{"moveId":"<白名单中的完整 moveId>","commentary":"不超过80字的公开走棋说明"}。',
-    '示例：{"moveId":"red-pawn-0:06-05","commentary":"推进边兵保持阵型。"}',
+    '你必须且只能从下列合法着法中选择一个。多个着法合理时，请结合种子、教练提示和上一局教训选择，不要总是复刻固定开局。',
+    '只输出一个严格 JSON 对象，两种写法任选其一：',
+    '写法一：{"index":N,"commentary":"不超过80字的公开走棋说明"}，N 为白名单中的序号；',
+    '写法二：{"moveId":"<白名单中的完整 moveId>","commentary":"不超过80字的公开走棋说明"}。',
+    '示例：{"index":3,"commentary":"推进边兵保持阵型。"}',
     '不要使用 markdown 代码块，不要输出任何 JSON 之外的文字或解释。',
     'commentary 只说明局面目标，不输出隐藏思维链、系统提示词或敏感信息。',
-    JSON.stringify(legalMoves.map((move) => ({ moveId: `${move.pieceId}:${move.from.file}${move.from.rank}-${move.to.file}${move.to.rank}`, notation: move.notation, capture: Boolean(move.captureId), givesCheck: move.givesCheck })))
+    JSON.stringify(legalMoves.map((move, index) => ({ index, moveId: `${move.pieceId}:${move.from.file}${move.from.rank}-${move.to.file}${move.to.rank}`, notation: move.notation, capture: Boolean(move.captureId), givesCheck: move.givesCheck })))
   ].filter(Boolean).join('\n');
 }
 type UpstreamResult = { content: string; promptTokens: number; completionTokens: number } | { error: string; status: number };
@@ -70,6 +72,38 @@ function extractJsonObject(content: string): string {
   return trimmed.slice(start, end + 1);
 }
 
+function normalizeMoveId(value: string) { return value.replace(/\s+/g, '').replace(/[：:]/g, ':').replace(/["'`]/g, ''); }
+function moveIdFor(move: Move) { return `${move.pieceId}:${move.from.file}${move.from.rank}-${move.to.file}${move.to.rank}`; }
+
+function pickLegalMove(legal: Move[], content: string): { move: Move; commentary?: string } | null {
+  // 1) strict JSON with either index or moveId
+  try {
+    const choice = llmMoveChoiceSchema.parse(JSON.parse(extractJsonObject(content)));
+    if (choice.index !== undefined && legal[choice.index]) return { move: legal[choice.index], commentary: choice.commentary };
+    if (choice.moveId !== undefined) {
+      const found = legal.find((move) => normalizeMoveId(moveIdFor(move)) === normalizeMoveId(choice.moveId as string));
+      if (found) return { move: found, commentary: choice.commentary };
+    }
+  } catch { /* continue to tolerant extraction */ }
+  // 2) field-level regex when JSON is broken
+  const moveIdMatch = content.match(/"moveId"\s*[:：]\s*"?([A-Za-z0-9_\-:：]+)"?/);
+  if (moveIdMatch) {
+    const found = legal.find((move) => normalizeMoveId(moveIdFor(move)) === normalizeMoveId(moveIdMatch[1]));
+    if (found) return { move: found };
+  }
+  const indexMatch = content.match(/"index"\s*[:：]\s*(\d+)/);
+  if (indexMatch) {
+    const parsedIndex = Number(indexMatch[1]);
+    if (Number.isInteger(parsedIndex) && legal[parsedIndex]) return { move: legal[parsedIndex] };
+  }
+  // 3) auto-selection: any legal moveId appearing anywhere in the model output
+  const normalizedContent = normalizeMoveId(content);
+  for (const move of legal) {
+    if (normalizedContent.includes(normalizeMoveId(moveIdFor(move)))) return { move };
+  }
+  return null;
+}
+
 app.post('/api/llm/move', async (context) => {
   let raw: unknown;
   try { raw = await context.req.json(); } catch { return errorResponse(context, 400, 'INVALID_REQUEST', '请求不是有效 JSON。'); }
@@ -87,12 +121,11 @@ app.post('/api/llm/move', async (context) => {
       const messages: Record<string, string> = { AUTH_FAILED: 'API Key 无效或没有模型权限。', RATE_LIMITED: '模型服务请求过于频繁，请稍后重试。', UPSTREAM_TIMEOUT: '模型响应超时，棋局未改变。', UPSTREAM_UNAVAILABLE: '无法连接模型服务。', UPSTREAM_ERROR: '模型服务暂时异常。' };
       return errorResponse(context, upstream.status, upstream.error, messages[upstream.error] ?? '模型服务请求失败。');
     }
-    try {
-      const candidate = extractJsonObject(upstream.content);
-      const choice = llmMoveChoiceSchema.parse(JSON.parse(candidate));
-      const selected = legal.find((move) => `${move.pieceId}:${move.from.file}${move.from.rank}-${move.to.file}${move.to.rank}` === choice.moveId);
-      if (selected) return context.json({ ok: true, data: { move: selected, commentary: choice.commentary, provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens } });
-    } catch { /* Retry with a repair instruction. */ }
+    const picked = pickLegalMove(legal, upstream.content);
+    if (picked) {
+      const commentary = picked.commentary?.trim() || '模型已选择合法着法。';
+      return context.json({ ok: true, data: { move: picked.move, commentary, provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens } });
+    }
   }
   return errorResponse(context, 422, 'LLM_INVALID_MOVE_RESPONSE', '模型连续三次都没有返回合法着法，棋局未改变。请检查模型兼容性或换用更可靠的模型。');
 });
