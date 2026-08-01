@@ -90,7 +90,7 @@ function pickLegalMove(legal: Move[], content: string): { move: Move; commentary
     }
   } catch { /* continue to tolerant extraction */ }
   // 2) field-level regex when JSON is broken
-  if (/\"undo\"\s*[:：]\s*true/i.test(content)) return { undo: true };
+  if (/"undo"\s*[:：]\s*true/i.test(content)) return { undo: true };
   const moveIdMatch = content.match(/"moveId"\s*[:：]\s*"?([A-Za-z0-9_\-:：]+)"?/);
   const rawMoveId = moveIdMatch?.[1];
   if (rawMoveId) {
