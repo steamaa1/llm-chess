@@ -79,7 +79,8 @@ function pickLegalMove(legal: Move[], content: string): { move: Move; commentary
   // 1) strict JSON with either index or moveId
   try {
     const choice = llmMoveChoiceSchema.parse(JSON.parse(extractJsonObject(content)));
-    if (choice.index !== undefined && legal[choice.index]) return { move: legal[choice.index], commentary: choice.commentary };
+    const byIndex = choice.index !== undefined ? legal[choice.index] : undefined;
+    if (byIndex) return { move: byIndex, commentary: choice.commentary };
     if (choice.moveId !== undefined) {
       const found = legal.find((move) => normalizeMoveId(moveIdFor(move)) === normalizeMoveId(choice.moveId as string));
       if (found) return { move: found, commentary: choice.commentary };
@@ -87,8 +88,9 @@ function pickLegalMove(legal: Move[], content: string): { move: Move; commentary
   } catch { /* continue to tolerant extraction */ }
   // 2) field-level regex when JSON is broken
   const moveIdMatch = content.match(/"moveId"\s*[:：]\s*"?([A-Za-z0-9_\-:：]+)"?/);
-  if (moveIdMatch) {
-    const found = legal.find((move) => normalizeMoveId(moveIdFor(move)) === normalizeMoveId(moveIdMatch[1]));
+  const rawMoveId = moveIdMatch?.[1];
+  if (rawMoveId) {
+    const found = legal.find((move) => normalizeMoveId(moveIdFor(move)) === normalizeMoveId(rawMoveId));
     if (found) return { move: found };
   }
   const indexMatch = content.match(/"index"\s*[:：]\s*(\d+)/);
