@@ -85,7 +85,7 @@ describe('undo requests', () => {
 
 describe('model output debugging', () => {
   it('returns the last model output when no legal move is selected', async () => {
-    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({ choices: [{ message: { content: '我选择走兵三进一。' } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ choices: [{ message: { content: '我选择走兵三进一。' } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     const response = await app.request('/api/llm/move', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ config: { provider: 'deepseek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', apiKey: 'test-key' }, side: 'red', moves: [], gameSeed: 'output-test' })
