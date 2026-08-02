@@ -147,5 +147,5 @@ app.post('/api/llm/move', async (context) => {
       return context.json({ ok: true, data: { move: picked.move, commentary, provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens, rawOutput: upstream.content.slice(0, 600) } });
     }
   }
-  return context.json({ ok: false, error: { code: 'LLM_INVALID_MOVE_RESPONSE', message: '模型连续三次都没有返回合法着法，棋局未改变。请检查模型兼容性或换用更可靠的模型。', modelOutput: lastContent.slice(0, 800) } }, 422 as never);
+  return context.json({ ok: false, error: { code: 'LLM_INVALID_MOVE_RESPONSE', message: '模型连续三次都没有返回合法着法，棋局未改变。请检查模型兼容性或换用更可靠的模型。', modelOutput: lastContent.trim() ? lastContent.slice(0, 800) : '(模型未返回任何内容)' } }, 422 as never);
 });
