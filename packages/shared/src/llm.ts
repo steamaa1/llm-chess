@@ -41,7 +41,8 @@ export const llmMoveResponseSchema = z.object({
     }).strict().optional(),
     commentary: z.string().max(180).optional(),
     provider: z.string(), model: z.string(), durationMs: z.number().nonnegative(),
-    promptTokens: z.number().int().nonnegative(), completionTokens: z.number().int().nonnegative()
+    promptTokens: z.number().int().nonnegative(), completionTokens: z.number().int().nonnegative(),
+    rawOutput: z.string().max(800).optional()
   }).strict().refine((value) => value.undo === true || value.move !== undefined, '必须返回 undo 或 move')
 }).strict();
 

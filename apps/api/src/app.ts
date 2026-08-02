@@ -129,6 +129,7 @@ app.post('/api/llm/move', async (context) => {
   const legal = allLegalMoves(restored.pieces, restored.side);
   const prompt = promptFor(restored.side, legal, parsed.data.moves.length, parsed.data.gameSeed, parsed.data.coachNote, parsed.data.memory, parsed.data.undoNotice); const started = Date.now();
   const temperature = 0.35 + (Array.from(parsed.data.gameSeed).reduce((sum, char) => sum + char.charCodeAt(0), 0) % 36) / 100;
+  let lastContent = '';
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const upstream = await callModel(parsed.data.config.baseUrl, parsed.data.config.apiKey, parsed.data.config.model, prompt, attempt === 1, parsed.data.config.provider, temperature);
     if ('error' in upstream) {
@@ -136,14 +137,15 @@ app.post('/api/llm/move', async (context) => {
       const detailText = upstream.detail ? `（${upstream.detail.slice(0, 200)}）` : '';
       return errorResponse(context, upstream.status, upstream.error, `${messages[upstream.error] ?? '模型服务请求失败。'}${detailText}`);
     }
+    lastContent = upstream.content;
     const picked = pickLegalMove(legal, upstream.content);
     if (picked && 'undo' in picked && picked.undo) {
-      return context.json({ ok: true, data: { undo: true, undoReason: picked.reason ?? '模型申请悔棋', provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens } });
+      return context.json({ ok: true, data: { undo: true, undoReason: picked.reason ?? '模型申请悔棋', provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens, rawOutput: upstream.content.slice(0, 600) } });
     }
     if (picked && 'move' in picked) {
       const commentary = picked.commentary?.trim() || '模型已选择合法着法。';
-      return context.json({ ok: true, data: { move: picked.move, commentary, provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens } });
+      return context.json({ ok: true, data: { move: picked.move, commentary, provider: parsed.data.config.provider, model: parsed.data.config.model, durationMs: Date.now() - started, promptTokens: upstream.promptTokens, completionTokens: upstream.completionTokens, rawOutput: upstream.content.slice(0, 600) } });
     }
   }
-  return errorResponse(context, 422, 'LLM_INVALID_MOVE_RESPONSE', '模型连续三次都没有返回合法着法，棋局未改变。请检查模型兼容性或换用更可靠的模型。');
+  return context.json({ ok: false, error: { code: 'LLM_INVALID_MOVE_RESPONSE', message: '模型连续三次都没有返回合法着法，棋局未改变。请检查模型兼容性或换用更可靠的模型。', modelOutput: lastContent.slice(0, 800) } }, 422 as never);
 });

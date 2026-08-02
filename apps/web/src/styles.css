@@ -62,3 +62,4 @@
   }
   .side-event p { flex:1; min-width:0; font-size:.74rem; }
 }
+.model-output{grid-column:1/-1;margin-top:6px;border:1px solid #e3d5c3;border-radius:8px;background:#faf5ea}.model-output summary{cursor:pointer;padding:6px 10px;color:#8a6d4a;font-size:.72rem;user-select:none}.model-output pre{margin:0;padding:8px 10px;max-height:170px;overflow:auto;color:#5d4a33;border-top:1px solid #ecdfcb;background:#fdf9f0;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.72rem;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
